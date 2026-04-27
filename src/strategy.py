@@ -2,7 +2,7 @@ from enum import Enum
 import pandas as pd
 
 from src.indicators import add_indicators, latest
-from src.config import SIDEWAYS_WINDOW, SIDEWAYS_CROSS_THRESHOLD
+from src.config import EMA_TOUCH_PCT, PULLBACK_LOWER_PCT
 
 
 class Signal(Enum):
@@ -17,7 +17,8 @@ def get_signal(df: pd.DataFrame) -> tuple[Signal, str]:
     if len(df) < 2:
         return Signal.HOLD, "데이터 부족"
 
-    row = latest(df)
+    row  = latest(df)
+    prev = df.iloc[-2]
 
     ema9  = row["ema9"]
     vwap  = row["vwap"]
@@ -27,43 +28,32 @@ def get_signal(df: pd.DataFrame) -> tuple[Signal, str]:
     if pd.isna(ema9) or pd.isna(vwap):
         return Signal.HOLD, "지표 계산 데이터 부족"
 
-    if _is_sideways(df):
-        return Signal.HOLD, "횡보장 - 관망"
-
     is_bullish = close > open_
     is_bearish = close < open_
 
-    above_vwap   = close > vwap
-    below_vwap   = close < vwap
-    uptrend      = close > ema9   # EMA9 위 = 상승추세
-    downtrend    = close < ema9   # EMA9 아래 = 하락추세
+    # ── VWAP 위 = 롱 타점만 탐색 ─────────────────────────────
+    if close > vwap:
+        # 눌림목: 직전 캔들 저가가 EMA9 근처(+0.5% ~ -2%)까지 눌렸다가
+        # 현재 캔들이 EMA9 위에서 양봉으로 마감 → 진입
+        pullback = (prev["low"] <= ema9 * (1 + EMA_TOUCH_PCT)
+                    and prev["low"] >= ema9 * (1 - PULLBACK_LOWER_PCT))
+        bounce   = is_bullish and close > ema9
+        if pullback and bounce:
+            return Signal.BUY, f"VWAP위({vwap:.2f}) | EMA9눌림반등({ema9:.2f})"
+        return Signal.HOLD, f"VWAP위 매수타점 대기 | EMA9={ema9:.2f}"
 
-    empty_above = bool(row.get("vp_empty_above", False))
-    empty_below = bool(row.get("vp_empty_below", False))
+    # ── VWAP 아래 = 숏 타점만 탐색 ───────────────────────────
+    if close < vwap:
+        # 눌림목: 직전 캔들 고가가 EMA9 근처(-0.5% ~ +2%)까지 되돌아갔다가
+        # 현재 캔들이 EMA9 아래에서 음봉으로 마감 → 진입
+        pullback = (prev["high"] >= ema9 * (1 - EMA_TOUCH_PCT)
+                    and prev["high"] <= ema9 * (1 + PULLBACK_LOWER_PCT))
+        bounce   = is_bearish and close < ema9
+        if pullback and bounce:
+            return Signal.SELL, f"VWAP아래({vwap:.2f}) | EMA9반락({ema9:.2f})"
+        return Signal.HOLD, f"VWAP아래 매도타점 대기 | EMA9={ema9:.2f}"
 
-    # 롱: VWAP 위 + 상승추세(EMA9 위) + 양봉 + 위쪽 매물 없음
-    if above_vwap and uptrend and is_bullish and empty_above:
-        return Signal.BUY, f"VWAP위({vwap:.2f}) + EMA9위({ema9:.2f}) + 위쪽매물공백"
-
-    # 숏: VWAP 아래 + 하락추세(EMA9 아래) + 음봉 + 아래쪽 매물 없음
-    if below_vwap and downtrend and is_bearish and empty_below:
-        return Signal.SELL, f"VWAP아래({vwap:.2f}) + EMA9아래({ema9:.2f}) + 아래쪽매물공백"
-
-    trend_str = "EMA9위" if uptrend else "EMA9아래"
-    vwap_str  = "VWAP위" if above_vwap else "VWAP아래"
-    return Signal.HOLD, f"{vwap_str} | {trend_str} | EMA9={ema9:.2f} VWAP={vwap:.2f}"
-
-
-def _is_sideways(df: pd.DataFrame) -> bool:
-    recent = df.tail(SIDEWAYS_WINDOW)
-    if "vwap" not in recent.columns:
-        return False
-    crossings = sum(
-        1 for i in range(1, len(recent))
-        if (recent["close"].iloc[i - 1] > recent["vwap"].iloc[i - 1])
-        != (recent["close"].iloc[i] > recent["vwap"].iloc[i])
-    )
-    return crossings >= SIDEWAYS_CROSS_THRESHOLD
+    return Signal.HOLD, f"VWAP={vwap:.2f} EMA9={ema9:.2f}"
 
 
 if __name__ == "__main__":
