@@ -79,6 +79,18 @@ def sell_limit(symbol: str, qty: int, price: float) -> Order:
     return order
 
 
+def is_shortable(symbol: str) -> bool:
+    try:
+        asset = _client.get_asset(symbol)
+        return bool(asset.shortable) and bool(asset.easy_to_borrow)
+    except Exception:
+        return False
+
+
+def get_shortable_set(symbols: list[str]) -> set[str]:
+    return {s for s in symbols if is_shortable(s)}
+
+
 def cancel_all_orders():
     _client.cancel_orders()
     print("[취소] 모든 미체결 주문 취소")

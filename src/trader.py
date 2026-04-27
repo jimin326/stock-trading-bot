@@ -1,7 +1,7 @@
 import time
 from datetime import datetime, date
 
-from src.broker import get_account, get_position, buy_market, sell_market, cancel_all_orders
+from src.broker import get_account, get_position, buy_market, sell_market, cancel_all_orders, is_shortable
 from src.data_feed import get_bars
 from src.strategy import get_signal, Signal
 from src.risk import position_size, check_exit_long, check_exit_short
@@ -18,7 +18,7 @@ def is_market_open() -> bool:
 def run(interval_sec: int = 300):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 트레이딩 봇 시작")
 
-    active_symbols: list[str] = config.TRADE_SYMBOLS  # 장 열리면 스캐너로 교체
+    active_symbols: list[str] = config.TRADE_SYMBOLS
     last_scan_date: date | None = None
 
     while True:
@@ -30,7 +30,6 @@ def run(interval_sec: int = 300):
 
             today = date.today()
 
-            # 오늘 첫 번째 루프 → 스캐너 실행
             if last_scan_date != today:
                 print(f"\n[{datetime.now().strftime('%H:%M:%S')}] 종목 스캔 중...")
                 scan_results = scan_market()
@@ -44,7 +43,7 @@ def run(interval_sec: int = 300):
                     print(f"  스캔 조건 미충족 → 기본 종목 사용: {active_symbols}")
                 last_scan_date = today
 
-            acct = get_account()
+            acct   = get_account()
             equity = acct["equity"]
             print(f"\n[{datetime.now().strftime('%H:%M:%S')}] 자산 ${equity:,.2f} | 오늘 손익 ${acct['pnl']:+,.2f}")
             print(f"  대상: {active_symbols}")
@@ -64,12 +63,12 @@ def run(interval_sec: int = 300):
                     entry    = float(position.avg_entry_price)
                     qty      = int(position.qty)
                     side     = "long" if float(position.qty) > 0 else "short"
+                    cur_open = df_ind["open"].iloc[-1]
 
-                    current_open = df_ind["open"].iloc[-1]
                     if side == "long":
-                        do_exit, _, reason = check_exit_long(current_price, current_open, current_price, ema9, entry)
+                        do_exit, _, reason = check_exit_long(current_price, cur_open, current_price, ema9, entry)
                     else:
-                        do_exit, _, reason = check_exit_short(current_price, current_open, current_price, ema9, entry)
+                        do_exit, _, reason = check_exit_short(current_price, cur_open, current_price, ema9, entry)
 
                     if do_exit:
                         print(f"  [{symbol}] 청산({reason}) | 진입 ${entry:.2f} → 현재 ${current_price:.2f}")
@@ -85,9 +84,13 @@ def run(interval_sec: int = 300):
                         print(f"  [{symbol}] 매수 | {reason}")
                         buy_market(symbol, qty)
 
-                elif signal == Signal.SELL and position:
-                    print(f"  [{symbol}] 매도 | {reason}")
-                    sell_market(symbol, int(position.qty))
+                elif signal == Signal.SELL and not position:
+                    if is_shortable(symbol):
+                        qty = position_size(equity, current_price)
+                        print(f"  [{symbol}] 숏 진입 | {reason}")
+                        sell_market(symbol, qty)
+                    else:
+                        print(f"  [{symbol}] HOLD (공매도 불가) | {reason}")
 
                 else:
                     print(f"  [{symbol}] {signal.value} | {reason}")
