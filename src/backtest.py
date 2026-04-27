@@ -3,15 +3,14 @@ import numpy as np
 from dataclasses import dataclass, field
 
 from src.indicators import add_indicators
-from src.config import (
-    RSI_OVERSOLD, RSI_OVERBOUGHT,
-    STOP_LOSS_PCT, TAKE_PROFIT_PCT, MAX_POSITION_PCT
-)
+from src.config import MAX_POSITION_PCT
+from src.risk import should_exit_long, should_exit_short
 
 
 @dataclass
 class Trade:
     symbol: str
+    side: str           # "long" or "short"
     entry_time: pd.Timestamp
     entry_price: float
     qty: int
@@ -23,13 +22,19 @@ class Trade:
     def pnl(self) -> float:
         if self.exit_price is None:
             return 0.0
-        return (self.exit_price - self.entry_price) * self.qty
+        if self.side == "long":
+            return (self.exit_price - self.entry_price) * self.qty
+        else:
+            return (self.entry_price - self.exit_price) * self.qty
 
     @property
     def pnl_pct(self) -> float:
         if self.exit_price is None:
             return 0.0
-        return (self.exit_price - self.entry_price) / self.entry_price * 100
+        if self.side == "long":
+            return (self.exit_price - self.entry_price) / self.entry_price * 100
+        else:
+            return (self.entry_price - self.exit_price) / self.entry_price * 100
 
 
 @dataclass
@@ -88,7 +93,7 @@ class BacktestResult:
 
 
 def run_backtest(df: pd.DataFrame, symbol: str, initial_equity: float = 10000.0) -> BacktestResult:
-    df = add_indicators(df).dropna()
+    df = add_indicators(df).dropna(subset=["ema9", "vwap"])
     result = BacktestResult(symbol=symbol, initial_equity=initial_equity)
 
     equity = initial_equity
@@ -97,61 +102,77 @@ def run_backtest(df: pd.DataFrame, symbol: str, initial_equity: float = 10000.0)
     for i in range(1, len(df)):
         row = df.iloc[i]
         prev = df.iloc[i - 1]
-        price = row["close"]
+
+        close = row["close"]
+        open_ = row["open"]
+        low = row["low"]
+        high = row["high"]
+        ema9 = row["ema9"]
+        vwap = row["vwap"]
+        is_bullish = close > open_
+        is_bearish = close < open_
         result.equity_curve.append(equity)
 
-        # 포지션 보유 중 → 손절/익절 체크
+        # 포지션 보유 중 → EMA9 기준 청산 체크
         if position:
-            sl = position.entry_price * (1 - STOP_LOSS_PCT)
-            tp = position.entry_price * (1 + TAKE_PROFIT_PCT)
-
-            if price <= sl:
+            if position.side == "long" and should_exit_long(close, ema9):
                 position.exit_time = row.name
-                position.exit_price = price
-                position.reason = "손절"
+                position.exit_price = close
+                position.reason = "EMA9하향이탈"
                 equity += position.pnl
                 result.trades.append(position)
                 position = None
                 continue
 
-            if price >= tp:
+            if position.side == "short" and should_exit_short(close, ema9):
                 position.exit_time = row.name
-                position.exit_price = price
-                position.reason = "익절"
+                position.exit_price = close
+                position.reason = "EMA9상향이탈"
                 equity += position.pnl
                 result.trades.append(position)
                 position = None
                 continue
 
-            # 매도 신호
-            sell_rsi = row["rsi"] > RSI_OVERBOUGHT
-            sell_macd = row["macd_diff"] < 0 and prev["macd_diff"] >= 0
-            if sell_rsi or sell_macd:
-                position.exit_time = row.name
-                position.exit_price = price
-                position.reason = "RSI과매수" if sell_rsi else "MACD음전환"
-                equity += position.pnl
-                result.trades.append(position)
-                position = None
-
-        # 포지션 없음 → 매수 신호 체크
+        # 포지션 없음 → 진입 신호 체크
         else:
-            buy_rsi = row["rsi"] < RSI_OVERSOLD
-            buy_macd = row["macd_diff"] > 0 and prev["macd_diff"] <= 0
-            buy_ma = row["ma_short"] > row["ma_long"] and prev["ma_short"] <= prev["ma_long"]
-            buy_bb = price <= row["bb_lower"] * 1.01
+            above_vwap = close > vwap
+            below_vwap = close < vwap
+            ema_touch = 0.003
 
-            if (buy_rsi or buy_bb) and (buy_macd or buy_ma):
-                qty = max(int(equity * MAX_POSITION_PCT / price), 1)
-                if equity >= price * qty:
+            ema_support = low <= ema9 * (1 + ema_touch) and close > ema9
+            ema_resistance = high >= ema9 * (1 - ema_touch) and close < ema9
+
+            empty_above = bool(row.get("vp_empty_above", False))
+            empty_below = bool(row.get("vp_empty_below", False))
+
+            # 횡보장 체크
+            recent = df.iloc[max(0, i - 6): i + 1]
+            crossings = sum(
+                1 for j in range(1, len(recent))
+                if (recent["close"].iloc[j - 1] > recent["vwap"].iloc[j - 1])
+                != (recent["close"].iloc[j] > recent["vwap"].iloc[j])
+            )
+            if crossings >= 2:
+                continue
+
+            # 롱 진입
+            if above_vwap and ema_support and is_bullish and empty_above:
+                qty = max(int(equity * MAX_POSITION_PCT / close), 1)
+                if equity >= close * qty:
                     position = Trade(
-                        symbol=symbol,
-                        entry_time=row.name,
-                        entry_price=price,
-                        qty=qty,
+                        symbol=symbol, side="long",
+                        entry_time=row.name, entry_price=close, qty=qty,
                     )
 
-    # 마지막에 포지션 남아있으면 강제 청산
+            # 숏 진입
+            elif below_vwap and ema_resistance and is_bearish and empty_below:
+                qty = max(int(equity * MAX_POSITION_PCT / close), 1)
+                position = Trade(
+                    symbol=symbol, side="short",
+                    entry_time=row.name, entry_price=close, qty=qty,
+                )
+
+    # 마지막 포지션 강제 청산
     if position:
         last = df.iloc[-1]
         position.exit_time = last.name
@@ -177,5 +198,5 @@ if __name__ == "__main__":
         if result.trades:
             print(f"\n  최근 거래 5건:")
             for t in result.trades[-5:]:
-                print(f"    {t.entry_time.strftime('%m/%d')} → {t.exit_time.strftime('%m/%d')} "
+                print(f"    [{t.side:5s}] {t.entry_time.strftime('%m/%d')} → {t.exit_time.strftime('%m/%d')} "
                       f"| {t.pnl_pct:+.2f}% | {t.reason}")
