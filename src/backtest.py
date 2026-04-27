@@ -137,26 +137,24 @@ def run_backtest(df: pd.DataFrame, symbol: str, initial_equity: float = 10000.0)
         else:
             above_vwap = close > vwap
             below_vwap = close < vwap
-            ema_touch = 0.003
-
-            ema_support = low <= ema9 * (1 + ema_touch) and close > ema9
-            ema_resistance = high >= ema9 * (1 - ema_touch) and close < ema9
+            uptrend    = close > ema9
+            downtrend  = close < ema9
 
             empty_above = bool(row.get("vp_empty_above", False))
             empty_below = bool(row.get("vp_empty_below", False))
 
-            # 횡보장 체크
+            # 횡보장 체크 (6봉 중 3번 이상 VWAP 교차)
             recent = df.iloc[max(0, i - 6): i + 1]
             crossings = sum(
                 1 for j in range(1, len(recent))
                 if (recent["close"].iloc[j - 1] > recent["vwap"].iloc[j - 1])
                 != (recent["close"].iloc[j] > recent["vwap"].iloc[j])
             )
-            if crossings >= 2:
+            if crossings >= 3:
                 continue
 
-            # 롱 진입
-            if above_vwap and ema_support and is_bullish and empty_above:
+            # 롱: VWAP 위 + 상승추세 + 양봉 + 위쪽 매물 없음
+            if above_vwap and uptrend and is_bullish and empty_above:
                 qty = max(int(equity * MAX_POSITION_PCT / close), 1)
                 if equity >= close * qty:
                     position = Trade(
@@ -164,8 +162,8 @@ def run_backtest(df: pd.DataFrame, symbol: str, initial_equity: float = 10000.0)
                         entry_time=row.name, entry_price=close, qty=qty,
                     )
 
-            # 숏 진입
-            elif below_vwap and ema_resistance and is_bearish and empty_below:
+            # 숏: VWAP 아래 + 하락추세 + 음봉 + 아래쪽 매물 없음
+            elif below_vwap and downtrend and is_bearish and empty_below:
                 qty = max(int(equity * MAX_POSITION_PCT / close), 1)
                 position = Trade(
                     symbol=symbol, side="short",
