@@ -47,7 +47,7 @@ def scan_market(
     for symbol, snap in snapshots.items():
         try:
             daily = snap.daily_bar
-            prev  = snap.prev_daily_bar
+            prev  = snap.previous_daily_bar
             if not daily or not prev or prev.close == 0 or prev.volume == 0:
                 continue
 
