@@ -3,7 +3,7 @@ import numpy as np
 from dataclasses import dataclass, field
 
 from src.indicators import add_indicators
-from src.config import MAX_POSITION_PCT, TIMEFRAME
+from src.config import MAX_POSITION_PCT, TIMEFRAME, BACKTEST_UNIVERSE, GAP_THRESHOLD, VOL_RATIO_MIN, SCAN_TOP_N
 from src.risk import check_exit_long, check_exit_short
 
 
@@ -179,18 +179,202 @@ def run_backtest(df: pd.DataFrame, symbol: str, initial_equity: float = 10000.0)
     return result
 
 
+def run_scanner_backtest(
+    days: int = 90,
+    initial_equity: float = 10_000.0,
+    gap_threshold: float = GAP_THRESHOLD,
+    vol_ratio_min: float = VOL_RATIO_MIN,
+    top_n: int = SCAN_TOP_N,
+) -> BacktestResult:
+    """매일 스캐너로 종목 선별 후 해당 종목만 거래하는 현실적인 백테스트"""
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+    from alpaca.data.enums import DataFeed
+    from datetime import datetime, timedelta
+    import src.config as _cfg
+
+    client = StockHistoricalDataClient(_cfg.ALPACA_API_KEY, _cfg.ALPACA_SECRET_KEY)
+    end   = datetime.now()
+    start_intra = end - timedelta(days=days)
+    start_daily = end - timedelta(days=days + 35)  # 20일 평균 계산 여유
+
+    print(f"[1/3] 일봉 데이터 수집 중 ({len(BACKTEST_UNIVERSE)}종목, {days+35}일)...")
+    daily_bars = client.get_stock_bars(StockBarsRequest(
+        symbol_or_symbols=BACKTEST_UNIVERSE,
+        timeframe=TimeFrame.Day,
+        start=start_daily,
+        feed=DataFeed.IEX,
+    )).data  # dict[symbol, list[Bar]]
+
+    print(f"[2/3] 5분봉 데이터 수집 중 (약 30초 소요)...")
+    intraday_bars = client.get_stock_bars(StockBarsRequest(
+        symbol_or_symbols=BACKTEST_UNIVERSE,
+        timeframe=TimeFrame(5, TimeFrameUnit.Minute),
+        start=start_intra,
+        feed=DataFeed.IEX,
+    )).data  # dict[symbol, list[Bar]]
+
+    # 일봉 → DataFrame 변환 (종목별)
+    daily_dfs: dict[str, pd.DataFrame] = {}
+    for sym, bars in daily_bars.items():
+        df = pd.DataFrame([{
+            "date":   b.timestamp.date(),
+            "open":   b.open, "high": b.high, "low": b.low,
+            "close":  b.close, "volume": b.volume,
+        } for b in bars]).set_index("date")
+        daily_dfs[sym] = df
+
+    # 5분봉 → DataFrame 변환 (종목별)
+    intraday_dfs: dict[str, pd.DataFrame] = {}
+    for sym, bars in intraday_bars.items():
+        df = pd.DataFrame([{
+            "timestamp": b.timestamp,
+            "open": b.open, "high": b.high, "low": b.low,
+            "close": b.close, "volume": b.volume,
+        } for b in bars]).set_index("timestamp")
+        intraday_dfs[sym] = df
+
+    # 거래일 목록 (backtest 기간)
+    all_dates = sorted(set(
+        d for sym_df in daily_dfs.values()
+        for d in sym_df.index
+        if d >= start_intra.date()
+    ))
+
+    print(f"[3/3] 전략 시뮬레이션 중 ({len(all_dates)}거래일)...")
+    result = BacktestResult(symbol="SCANNER", initial_equity=initial_equity)
+    equity = initial_equity
+
+    for date in all_dates:
+        # ── 당일 스캐너: 갭 + 20일 평균 거래량 필터 ──────────────
+        candidates = []
+        for sym, ddf in daily_dfs.items():
+            date_idx = ddf.index.tolist()
+            if date not in date_idx:
+                continue
+            pos = date_idx.index(date)
+            if pos < 21:  # 20일 평균 계산 불가
+                continue
+
+            today_bar = ddf.loc[date]
+            prev_bar  = ddf.iloc[pos - 1]
+            hist_bars = ddf.iloc[pos - 21: pos - 1]  # 20일 평균용
+
+            if prev_bar["close"] == 0 or hist_bars["volume"].mean() == 0:
+                continue
+
+            gap_pct   = (today_bar["open"] - prev_bar["close"]) / prev_bar["close"] * 100
+            vol_ratio = today_bar["volume"] / hist_bars["volume"].mean()
+
+            if abs(gap_pct) >= gap_threshold and vol_ratio >= vol_ratio_min:
+                candidates.append((sym, abs(gap_pct) * vol_ratio))
+
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        today_symbols = [s for s, _ in candidates[:top_n]]
+
+        if not today_symbols:
+            continue
+
+        # ── 선별 종목 당일 5분봉으로 전략 실행 ───────────────────
+        for sym in today_symbols:
+            if sym not in intraday_dfs:
+                continue
+
+            idf = intraday_dfs[sym]
+            day_mask = pd.to_datetime(idf.index).date == date
+            day_df   = idf[day_mask].copy()
+
+            if len(day_df) < 10:
+                continue
+
+            try:
+                day_df = add_indicators(day_df).dropna(subset=["ema9", "vwap"])
+            except Exception:
+                continue
+
+            position = None
+            for i in range(1, len(day_df)):
+                row   = day_df.iloc[i]
+                close = row["close"]
+                high  = row["high"]
+                low   = row["low"]
+                open_ = row["open"]
+                ema9  = row["ema9"]
+                vwap  = row["vwap"]
+
+                if position:
+                    if position.side == "long":
+                        do_exit, exit_price, reason = check_exit_long(close, low, ema9, position.entry_price)
+                    else:
+                        do_exit, exit_price, reason = check_exit_short(close, high, ema9, position.entry_price)
+
+                    if do_exit:
+                        position.exit_time  = row.name
+                        position.exit_price = exit_price
+                        position.reason     = reason
+                        equity += position.pnl
+                        result.trades.append(position)
+                        result.equity_curve.append(equity)
+                        position = None
+                    continue
+
+                # 진입 신호
+                is_bullish  = close > open_
+                is_bearish  = close < open_
+                above_vwap  = close > vwap
+                below_vwap  = close < vwap
+                uptrend     = close > ema9
+                downtrend   = close < ema9
+                empty_above = bool(row.get("vp_empty_above", False))
+                empty_below = bool(row.get("vp_empty_below", False))
+
+                recent = day_df.iloc[max(0, i - 6): i + 1]
+                crossings = sum(
+                    1 for j in range(1, len(recent))
+                    if (recent["close"].iloc[j-1] > recent["vwap"].iloc[j-1])
+                    != (recent["close"].iloc[j] > recent["vwap"].iloc[j])
+                )
+                if crossings >= 3:
+                    continue
+
+                if above_vwap and uptrend and is_bullish and empty_above:
+                    qty = max(int(equity * MAX_POSITION_PCT / close), 1)
+                    if equity >= close * qty:
+                        position = Trade(symbol=sym, side="long",
+                                         entry_time=row.name, entry_price=close, qty=qty)
+
+                elif below_vwap and downtrend and is_bearish and empty_below:
+                    qty = max(int(equity * MAX_POSITION_PCT / close), 1)
+                    position = Trade(symbol=sym, side="short",
+                                     entry_time=row.name, entry_price=close, qty=qty)
+
+            # 장 마감 강제 청산
+            if position:
+                last = day_df.iloc[-1]
+                position.exit_time  = last.name
+                position.exit_price = last["close"]
+                position.reason     = "장마감청산"
+                equity += position.pnl
+                result.trades.append(position)
+                result.equity_curve.append(equity)
+                position = None
+
+    result.equity_curve.append(equity)
+    return result
+
+
 if __name__ == "__main__":
-    from src.data_feed import get_bars
+    result = run_scanner_backtest(days=90)
+    result.summary()
 
-    symbols = ["AAPL", "TSLA", "NVDA", "MSFT"]
+    if result.trades:
+        print(f"\n  종목별 거래 수:")
+        from collections import Counter
+        for sym, cnt in Counter(t.symbol for t in result.trades).most_common(10):
+            print(f"    {sym}: {cnt}건")
 
-    for symbol in symbols:
-        df = get_bars(symbol, days=90, timeframe=TIMEFRAME)
-        result = run_backtest(df, symbol)
-        result.summary()
-
-        if result.trades:
-            print(f"\n  최근 거래 5건:")
-            for t in result.trades[-5:]:
-                print(f"    [{t.side:5s}] {t.entry_time.strftime('%m/%d')} → {t.exit_time.strftime('%m/%d')} "
-                      f"| {t.pnl_pct:+.2f}% | {t.reason}")
+        print(f"\n  최근 거래 10건:")
+        for t in result.trades[-10:]:
+            print(f"    [{t.side:5s}] {t.symbol:6s} {t.entry_time.strftime('%m/%d %H:%M')} → "
+                  f"{t.exit_time.strftime('%H:%M')} | {t.pnl_pct:+.2f}% | {t.reason}")

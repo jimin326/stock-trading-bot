@@ -27,7 +27,14 @@ GAP_THRESHOLD     = 2.0   # 갭 기준 (%)
 VOL_RATIO_MIN     = 1.5   # 전일 대비 거래량 배수 하한
 SCAN_TOP_N        = 5     # 최종 선정 종목 수
 
-# 스캔 유니버스 — S&P500 대형주 + 고변동성 인기 종목
+# 백테스트용 유니버스 (5분봉 데이터 부하 고려해 25종목으로 제한)
+BACKTEST_UNIVERSE = [
+    "AAPL","MSFT","NVDA","TSLA","AMZN","META","GOOGL","AMD",
+    "QCOM","INTC","COIN","PLTR","ARM","SMCI","MSTR",
+    "UBER","SHOP","SNAP","PYPL","SOFI","RIVN","NIO","HOOD","SQ","RBLX",
+]
+
+# 실시간 스캔 유니버스 — S&P500 대형주 + 고변동성 인기 종목
 SCAN_UNIVERSE = [
     "AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AVGO",
     "JPM","LLY","V","UNH","XOM","MA","HD","PG","COST","ORCL",

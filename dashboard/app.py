@@ -11,7 +11,7 @@ from src.broker import get_account, get_positions
 from src.data_feed import get_bars
 from src.indicators import add_indicators
 from src.strategy import get_signal, Signal
-from src.backtest import run_backtest
+from src.backtest import run_backtest, run_scanner_backtest
 from src.scanner import scan_market
 from src.config import TRADE_SYMBOLS
 
@@ -289,46 +289,51 @@ elif "scan_results" in st.session_state and len(st.session_state.scan_results) =
 st.divider()
 
 # ── 백테스트 결과 ──────────────────────────────────────────
-st.markdown('<div class="section-title">백테스트 결과</div>', unsafe_allow_html=True)
-bt_days = st.slider("백테스트 기간 (일)", 30, 180, 90, key="bt_days")
+st.markdown('<div class="section-title">백테스트 결과 (스캐너 기반)</div>', unsafe_allow_html=True)
+st.caption("매 거래일 갭+거래량 조건을 만족한 종목만 골라 거래하는 방식으로 시뮬레이션")
 
-bt_cols = st.columns(len(TRADE_SYMBOLS))
-for i, sym in enumerate(TRADE_SYMBOLS):
-    try:
-        df_bt  = get_bars(sym, days=bt_days)
-        result = run_backtest(df_bt, sym)
-        color  = "#00D278" if result.total_return_pct >= 0 else "#FF4747"
+bt_days = st.slider("백테스트 기간 (일)", 30, 90, 60, key="bt_days")
 
-        with bt_cols[i]:
-            st.markdown(f"""
-            <div class="toss-card">
-              <div style="color:#8E8E93;font-size:13px;font-weight:500">{sym}</div>
-              <div style="font-size:28px;font-weight:800;color:{color};letter-spacing:-1px;margin:6px 0">
-                {result.total_return_pct:+.2f}%
-              </div>
-              <div style="color:#8E8E93;font-size:12px">
-                승률 <span style="color:#F5F5F5;font-weight:600">{result.win_rate:.0f}%</span>
-                &nbsp;·&nbsp; {len(result.trades)}건
-              </div>
-              <div style="color:#8E8E93;font-size:12px;margin-top:4px">
-                MDD <span style="color:#F5F5F5;font-weight:600">{result.mdd:.1f}%</span>
-                &nbsp;·&nbsp; 샤프 <span style="color:#F5F5F5;font-weight:600">{result.sharpe:.2f}</span>
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
+if st.button("백테스트 실행", type="secondary"):
+    with st.spinner("데이터 수집 및 시뮬레이션 중... (약 30~60초)"):
+        try:
+            result = run_scanner_backtest(days=bt_days)
+            st.session_state.bt_result = result
+        except Exception as e:
+            st.error(f"백테스트 오류: {e}")
 
-            if result.equity_curve:
-                fig_eq = px.line(y=result.equity_curve)
-                fig_eq.update_layout(
-                    height=100,
-                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                    margin=dict(l=0, r=0, t=0, b=0),
-                    showlegend=False,
-                    xaxis=dict(visible=False),
-                    yaxis=dict(visible=False),
-                )
-                fig_eq.update_traces(line_color=color, line_width=2)
-                st.plotly_chart(fig_eq, use_container_width=True)
+if "bt_result" in st.session_state:
+    result = st.session_state.bt_result
+    color  = "#00D278" if result.total_return_pct >= 0 else "#FF4747"
 
-    except Exception as e:
-        bt_cols[i].error(f"{sym}: {e}")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("총 수익률",  f"{result.total_return_pct:+.2f}%")
+    m2.metric("MDD",       f"{result.mdd:.2f}%")
+    m3.metric("샤프 비율", f"{result.sharpe:.2f}")
+    m4.metric("승률",      f"{result.win_rate:.1f}%  ({len(result.trades)}건)")
+
+    if result.equity_curve:
+        fig_eq = px.line(y=result.equity_curve, title="자본 곡선")
+        fig_eq.update_layout(
+            height=250,
+            paper_bgcolor="#1C1C1E", plot_bgcolor="#1C1C1E",
+            font=dict(color="#8E8E93"),
+            margin=dict(l=0, r=0, t=32, b=0),
+            showlegend=False,
+            xaxis=dict(visible=False),
+            yaxis=dict(gridcolor="#2C2C2E"),
+            title_font_color="#F5F5F5",
+        )
+        fig_eq.update_traces(line_color=color, line_width=2)
+        st.plotly_chart(fig_eq, use_container_width=True)
+
+    # 종목별 거래 수
+    if result.trades:
+        from collections import Counter
+        sym_counts = Counter(t.symbol for t in result.trades).most_common(10)
+        rows = "".join(
+            f'<div class="sym-row"><div class="sym-name">{s}</div>'
+            f'<div style="color:#8E8E93">{c}건</div></div>'
+            for s, c in sym_counts
+        )
+        st.markdown(f'<div class="toss-card"><div class="section-title" style="font-size:14px;margin-bottom:8px">종목별 거래</div>{rows}</div>', unsafe_allow_html=True)
