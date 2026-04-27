@@ -1,25 +1,25 @@
 import time
-from datetime import datetime, timezone
+from datetime import datetime, date
 
 from src.broker import get_account, get_position, buy_market, sell_market, cancel_all_orders
 from src.data_feed import get_bars
 from src.strategy import get_signal, Signal
 from src.risk import position_size, should_stop_loss, should_take_profit
-from src.config import TRADE_SYMBOLS
+from src.scanner import scan_market
+import src.config as config
 
 
 def is_market_open() -> bool:
     from alpaca.trading.client import TradingClient
-    from src.config import ALPACA_API_KEY, ALPACA_SECRET_KEY
-    client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
-    clock = client.get_clock()
-    return clock.is_open
+    client = TradingClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY, paper=True)
+    return client.get_clock().is_open
 
 
-def run(symbols: list[str] = TRADE_SYMBOLS, interval_sec: int = 300):
+def run(interval_sec: int = 300):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 트레이딩 봇 시작")
-    print(f"대상 종목: {symbols}")
-    print(f"체크 주기: {interval_sec}초\n")
+
+    active_symbols: list[str] = config.TRADE_SYMBOLS  # 장 열리면 스캐너로 교체
+    last_scan_date: date | None = None
 
     while True:
         try:
@@ -28,47 +28,61 @@ def run(symbols: list[str] = TRADE_SYMBOLS, interval_sec: int = 300):
                 time.sleep(interval_sec)
                 continue
 
+            today = date.today()
+
+            # 오늘 첫 번째 루프 → 스캐너 실행
+            if last_scan_date != today:
+                print(f"\n[{datetime.now().strftime('%H:%M:%S')}] 종목 스캔 중...")
+                scan_results = scan_market()
+                if scan_results:
+                    active_symbols = [r.symbol for r in scan_results]
+                    print(f"  스캔 결과 ({len(active_symbols)}종목):")
+                    for r in scan_results:
+                        print(f"    {r}")
+                else:
+                    active_symbols = config.TRADE_SYMBOLS
+                    print(f"  스캔 조건 미충족 → 기본 종목 사용: {active_symbols}")
+                last_scan_date = today
+
             acct = get_account()
             equity = acct["equity"]
             print(f"\n[{datetime.now().strftime('%H:%M:%S')}] 자산 ${equity:,.2f} | 오늘 손익 ${acct['pnl']:+,.2f}")
+            print(f"  대상: {active_symbols}")
 
-            for symbol in symbols:
-                df = get_bars(symbol, days=5)
+            for symbol in active_symbols:
+                df = get_bars(symbol, days=5, timeframe=config.TIMEFRAME)
                 if df.empty:
                     continue
 
                 current_price = df["close"].iloc[-1]
                 position = get_position(symbol)
 
-                # 포지션 보유 중 → 손절/익절 체크
                 if position:
                     entry = float(position.avg_entry_price)
-                    qty = int(position.qty)
+                    qty   = int(position.qty)
 
                     if should_stop_loss(entry, current_price):
-                        print(f"  [{symbol}] 손절 실행 | 진입 ${entry:.2f} → 현재 ${current_price:.2f}")
+                        print(f"  [{symbol}] 손절 | 진입 ${entry:.2f} → 현재 ${current_price:.2f}")
                         sell_market(symbol, qty)
                         continue
 
                     if should_take_profit(entry, current_price):
-                        print(f"  [{symbol}] 익절 실행 | 진입 ${entry:.2f} → 현재 ${current_price:.2f}")
+                        print(f"  [{symbol}] 익절 | 진입 ${entry:.2f} → 현재 ${current_price:.2f}")
                         sell_market(symbol, qty)
                         continue
 
-                # 신호 확인
                 signal, reason = get_signal(df)
 
                 if signal == Signal.BUY and not position:
-                    qty = position_size(equity, current_price)
+                    qty  = position_size(equity, current_price)
                     cost = qty * current_price
                     if cost <= acct["cash"] * 0.95:
-                        print(f"  [{symbol}] 매수 신호 | {reason}")
+                        print(f"  [{symbol}] 매수 | {reason}")
                         buy_market(symbol, qty)
 
                 elif signal == Signal.SELL and position:
-                    qty = int(position.qty)
-                    print(f"  [{symbol}] 매도 신호 | {reason}")
-                    sell_market(symbol, qty)
+                    print(f"  [{symbol}] 매도 | {reason}")
+                    sell_market(symbol, int(position.qty))
 
                 else:
                     print(f"  [{symbol}] {signal.value} | {reason}")
@@ -78,7 +92,7 @@ def run(symbols: list[str] = TRADE_SYMBOLS, interval_sec: int = 300):
             cancel_all_orders()
             break
         except Exception as e:
-            print(f"오류 발생: {e}")
+            print(f"오류: {e}")
 
         time.sleep(interval_sec)
 

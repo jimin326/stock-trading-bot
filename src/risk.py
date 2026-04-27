@@ -1,4 +1,4 @@
-from src.config import STOP_LOSS_PCT, TAKE_PROFIT_PCT, MAX_POSITION_PCT
+from src.config import MAX_POSITION_PCT
 
 
 def position_size(equity: float, price: float) -> int:
@@ -7,20 +7,14 @@ def position_size(equity: float, price: float) -> int:
     return max(qty, 1)
 
 
-def stop_loss_price(entry_price: float) -> float:
-    return round(entry_price * (1 - STOP_LOSS_PCT), 2)
+def should_exit_long(close: float, ema9: float) -> bool:
+    """롱 포지션 청산: 캔들 몸통(종가)이 EMA9 아래에서 마감"""
+    return close < ema9
 
 
-def take_profit_price(entry_price: float) -> float:
-    return round(entry_price * (1 + TAKE_PROFIT_PCT), 2)
-
-
-def should_stop_loss(entry_price: float, current_price: float) -> bool:
-    return current_price <= stop_loss_price(entry_price)
-
-
-def should_take_profit(entry_price: float, current_price: float) -> bool:
-    return current_price >= take_profit_price(entry_price)
+def should_exit_short(close: float, ema9: float) -> bool:
+    """숏 포지션 청산: 캔들 몸통(종가)이 EMA9 위에서 마감"""
+    return close > ema9
 
 
 if __name__ == "__main__":
@@ -28,11 +22,7 @@ if __name__ == "__main__":
     price = 270.5
 
     qty = position_size(equity, price)
-    sl = stop_loss_price(price)
-    tp = take_profit_price(price)
-
     print(f"=== 리스크 계산 (잔고 ${equity:,.0f}) ===")
     print(f"매수가   : ${price}")
     print(f"수량     : {qty}주 (${qty * price:,.1f})")
-    print(f"손절가   : ${sl}  (-{STOP_LOSS_PCT*100:.0f}%)")
-    print(f"익절가   : ${tp}  (+{TAKE_PROFIT_PCT*100:.0f}%)")
+    print(f"청산기준 : EMA9 반대 돌파 시")

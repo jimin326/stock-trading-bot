@@ -12,137 +12,323 @@ from src.data_feed import get_bars
 from src.indicators import add_indicators
 from src.strategy import get_signal, Signal
 from src.backtest import run_backtest
+from src.scanner import scan_market
 from src.config import TRADE_SYMBOLS
 
 st.set_page_config(page_title="Stock Trading Bot", layout="wide", page_icon="📈")
-st.title("📈 Stock Trading Bot Dashboard")
 
-# 자동 새로고침 (30초)
+# ── CSS ─────────────────────────────────────────────────────
 st.markdown("""
-<meta http-equiv="refresh" content="30">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+html, body, [class*="css"] { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+.stApp { background-color: #0A0A0A; }
+header[data-testid="stHeader"] { background: transparent; }
+.toss-card {
+    background: #1C1C1E; border-radius: 16px;
+    padding: 20px 24px; margin-bottom: 12px; border: 1px solid #2C2C2E;
+}
+.badge { display:inline-block; padding:4px 12px; border-radius:20px; font-size:13px; font-weight:600; }
+.badge-buy  { background:rgba(0,210,120,0.15); color:#00D278; }
+.badge-sell { background:rgba(255,71,71,0.15);  color:#FF4747; }
+.badge-hold { background:rgba(142,142,147,0.15);color:#8E8E93; }
+.sym-row { display:flex; align-items:center; justify-content:space-between;
+           padding:12px 0; border-bottom:1px solid #2C2C2E; }
+.sym-row:last-child { border-bottom:none; }
+.sym-name { font-weight:600; font-size:15px; color:#F5F5F5; }
+.sym-sub  { font-size:12px; color:#8E8E93; margin-top:2px; }
+.section-title { font-size:18px; font-weight:700; color:#F5F5F5;
+                 margin-bottom:16px; letter-spacing:-0.5px; }
+[data-testid="stMetric"] { background:#1C1C1E; border-radius:16px;
+                            padding:16px 20px; border:1px solid #2C2C2E; }
+[data-testid="stMetricLabel"] { color:#8E8E93 !important; font-size:13px !important; }
+[data-testid="stMetricValue"] { font-size:22px !important; font-weight:700 !important; color:#F5F5F5 !important; }
+[data-testid="stMetricDelta"] svg { display:none; }
+hr { border-color:#2C2C2E !important; margin:24px 0 !important; }
+.js-plotly-plot { border-radius:12px; overflow:hidden; }
+.stAlert { border-radius:12px !important; border:none !important; }
+div[data-testid="stMarkdownContainer"] p { margin:0; }
+</style>
 """, unsafe_allow_html=True)
 
+# ── 세션 상태 초기화 ─────────────────────────────────────────
+if "chart_symbol" not in st.session_state:
+    st.session_state.chart_symbol = TRADE_SYMBOLS[0]
+if "scan_results" not in st.session_state:
+    st.session_state.scan_results = []
+
+# ── 타이틀 ──────────────────────────────────────────────────
+st.markdown('<h1 style="font-size:28px;font-weight:800;letter-spacing:-1px;color:#F5F5F5;margin-bottom:4px;">주식 트레이딩 봇</h1>', unsafe_allow_html=True)
+st.markdown('<p style="color:#8E8E93;font-size:14px;margin-bottom:24px;">실시간 모니터링 대시보드</p>', unsafe_allow_html=True)
+
 # ── 계좌 현황 ──────────────────────────────────────────────
-st.subheader("💰 계좌 현황")
 try:
     acct = get_account()
+    pnl  = acct['pnl']
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("총 자산", f"${acct['equity']:,.2f}")
-    col2.metric("현금", f"${acct['cash']:,.2f}")
+    col1.metric("총 자산",   f"${acct['equity']:,.2f}")
+    col2.metric("현금",      f"${acct['cash']:,.2f}")
     col3.metric("매수 가능", f"${acct['buying_power']:,.2f}")
-    pnl = acct['pnl']
     col4.metric("오늘 손익", f"${pnl:+,.2f}", delta=f"{pnl:+.2f}")
 except Exception as e:
     st.error(f"계좌 정보 오류: {e}")
 
 st.divider()
 
-# ── 종목 선택 & 차트 ───────────────────────────────────────
+# ── 차트 & 사이드패널 ──────────────────────────────────────
 col_left, col_right = st.columns([2, 1])
 
 with col_left:
-    st.subheader("📊 가격 차트 & 지표")
-    symbol = st.selectbox("종목 선택", TRADE_SYMBOLS)
-    days = st.slider("기간 (일)", 5, 60, 30)
+    st.markdown('<div class="section-title">가격 차트</div>', unsafe_allow_html=True)
+
+    # 스캔 종목이 선택돼 있으면 우선 표시, 아니면 기본 종목 리스트
+    scan_symbols = [r.symbol for r in st.session_state.scan_results]
+    all_symbols  = list(dict.fromkeys(scan_symbols + TRADE_SYMBOLS))  # 중복 제거, 스캔 종목 먼저
+
+    current_idx = all_symbols.index(st.session_state.chart_symbol) if st.session_state.chart_symbol in all_symbols else 0
+
+    ctrl1, ctrl2 = st.columns([2, 1])
+    selected_sym = ctrl1.selectbox("종목", all_symbols, index=current_idx, label_visibility="collapsed")
+    tf_option    = ctrl2.selectbox("타임프레임", ["1Min", "5Min", "15Min", "1Hour"], index=1, label_visibility="collapsed")
+
+    # 셀렉트박스에서 수동으로 바꾼 경우 반영
+    if selected_sym != st.session_state.chart_symbol:
+        st.session_state.chart_symbol = selected_sym
+
+    symbol = st.session_state.chart_symbol
+
+    tf_config = {"1Min": (3, 120), "5Min": (5, 100), "15Min": (10, 60), "1Hour": (30, 40)}
+    load_days, default_candles = tf_config.get(tf_option, (5, 100))
 
     try:
-        df = get_bars(symbol, days=days)
+        df = get_bars(symbol, days=load_days, timeframe=tf_option)
         df = add_indicators(df)
-        signal, reason = get_signal(df.iloc[:-1].copy())  # 마지막 봉 전까지로 신호 계산
+        signal, reason = get_signal(df.iloc[:-1].copy())
 
-        # 신호 배지
         if signal == Signal.BUY:
-            st.success(f"🟢 매수 신호 | {reason}")
+            st.success(f"매수 신호  |  {reason}")
         elif signal == Signal.SELL:
-            st.error(f"🔴 매도 신호 | {reason}")
+            st.error(f"매도 신호  |  {reason}")
         else:
-            st.info(f"⚪ 홀드 | {reason}")
+            st.info(f"홀드  |  {reason}")
 
-        # 캔들차트 + 이동평균
-        fig = go.Figure()
+        # 볼륨 프로파일
+        bins      = 30
+        price_min = df["low"].min()
+        price_max = df["high"].max()
+        bin_size  = (price_max - price_min) / bins
+        vp_prices, vp_vols = [], []
+        for b in range(bins):
+            lo  = price_min + b * bin_size
+            hi  = lo + bin_size
+            vol = df.loc[(df["close"] >= lo) & (df["close"] < hi), "volume"].sum()
+            vp_prices.append(round((lo + hi) / 2, 2))
+            vp_vols.append(vol)
+        max_vol   = max(vp_vols) if max(vp_vols) > 0 else 1
+        poc_price = vp_prices[vp_vols.index(max(vp_vols))]
+
+        from plotly.subplots import make_subplots
+        fig = make_subplots(rows=1, cols=2, column_widths=[0.82, 0.18],
+                            shared_yaxes=True, horizontal_spacing=0.01)
+
         fig.add_trace(go.Candlestick(
-            x=df.index,
-            open=df["open"], high=df["high"],
-            low=df["low"], close=df["close"],
-            name=symbol,
-        ))
-        fig.add_trace(go.Scatter(x=df.index, y=df["ma_short"], name=f"MA{df['ma_short'].name}", line=dict(color="orange", width=1)))
-        fig.add_trace(go.Scatter(x=df.index, y=df["ma_long"], name=f"MA Long", line=dict(color="blue", width=1)))
-        fig.add_trace(go.Scatter(x=df.index, y=df["bb_upper"], name="BB Upper", line=dict(color="gray", width=1, dash="dash")))
-        fig.add_trace(go.Scatter(x=df.index, y=df["bb_lower"], name="BB Lower", line=dict(color="gray", width=1, dash="dash"),
-                                  fill="tonexty", fillcolor="rgba(200,200,200,0.1)"))
-        fig.update_layout(height=400, xaxis_rangeslider_visible=False, margin=dict(l=0, r=0, t=0, b=0))
+            x=df.index, open=df["open"], high=df["high"],
+            low=df["low"], close=df["close"], name=symbol,
+            increasing_line_color="#00D278", increasing_fillcolor="#00D278",
+            decreasing_line_color="#FF4747", decreasing_fillcolor="#FF4747",
+        ), row=1, col=1)
+
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df["ema9"], name="EMA9",
+            line=dict(color="#FF6B6B", width=1.5),
+        ), row=1, col=1)
+
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df["vwap"], name="VWAP",
+            line=dict(color="#F5A623", width=1.5, dash="dash"),
+        ), row=1, col=1)
+
+        vp_colors = ["#F5A623" if p == poc_price else "rgba(100,149,237,0.5)" for p in vp_prices]
+        fig.add_trace(go.Bar(
+            x=vp_vols, y=vp_prices, orientation="h",
+            name="Volume Profile", marker_color=vp_colors, showlegend=False,
+        ), row=1, col=2)
+
+        fig.add_hline(y=poc_price, line_color="#F5A623", line_dash="dot",
+                      line_width=1, row=1, col=1)
+
+        visible = df.tail(default_candles)
+        y_min   = visible["low"].min()  * 0.9995
+        y_max   = visible["high"].max() * 1.0005
+        x_start = df.index[max(0, len(df) - default_candles)]
+        x_end   = df.index[-1]
+
+        fig.update_layout(
+            height=450,
+            paper_bgcolor="#1C1C1E", plot_bgcolor="#1C1C1E",
+            font=dict(color="#8E8E93", size=12),
+            xaxis=dict(gridcolor="#2C2C2E", rangeslider_visible=False,
+                       range=[x_start, x_end], fixedrange=False),
+            yaxis=dict(gridcolor="#2C2C2E", range=[y_min, y_max], fixedrange=False),
+            xaxis2=dict(gridcolor="#2C2C2E", showgrid=False, showticklabels=False, fixedrange=True),
+            yaxis2=dict(range=[0, max_vol * 4], fixedrange=True),
+            legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=11), x=0.01, y=0.99),
+            margin=dict(l=0, r=0, t=8, b=0),
+            dragmode="pan",
+        )
         st.plotly_chart(fig, use_container_width=True)
 
-        # RSI 차트
-        fig_rsi = go.Figure()
-        fig_rsi.add_trace(go.Scatter(x=df.index, y=df["rsi"], name="RSI", line=dict(color="purple")))
-        fig_rsi.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="과매수(70)")
-        fig_rsi.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="과매도(30)")
-        fig_rsi.update_layout(height=150, margin=dict(l=0, r=0, t=0, b=0), yaxis=dict(range=[0, 100]))
-        st.plotly_chart(fig_rsi, use_container_width=True)
+        fig_vol = go.Figure()
+        fig_vol.add_trace(go.Bar(
+            x=df.index, y=df["volume"],
+            marker_color=["#00D278" if c >= o else "#FF4747"
+                          for c, o in zip(df["close"], df["open"])],
+            showlegend=False,
+        ))
+        fig_vol.update_layout(
+            height=100,
+            paper_bgcolor="#1C1C1E", plot_bgcolor="#1C1C1E",
+            font=dict(color="#8E8E93", size=10),
+            xaxis=dict(gridcolor="#2C2C2E", showgrid=False),
+            yaxis=dict(gridcolor="#2C2C2E", showgrid=False, showticklabels=False),
+            margin=dict(l=0, r=0, t=0, b=0),
+        )
+        st.plotly_chart(fig_vol, use_container_width=True)
 
     except Exception as e:
         st.error(f"차트 오류: {e}")
 
 with col_right:
-    # ── 보유 포지션 ──────────────────────────────────────────
-    st.subheader("📋 보유 포지션")
+    st.markdown('<div class="section-title">보유 포지션</div>', unsafe_allow_html=True)
     try:
         positions = get_positions()
         if positions:
+            rows = []
             for p in positions:
-                pnl = float(p.unrealized_pl)
-                pct = float(p.unrealized_plpc) * 100
-                st.metric(
-                    label=f"{p.symbol} ({p.qty}주)",
-                    value=f"${float(p.current_price):.2f}",
-                    delta=f"${pnl:+.2f} ({pct:+.1f}%)"
-                )
+                pnl_v = float(p.unrealized_pl)
+                pct   = float(p.unrealized_plpc) * 100
+                color = "#00D278" if pnl_v >= 0 else "#FF4747"
+                rows.append(f"""
+                <div class="sym-row">
+                  <div>
+                    <div class="sym-name">{p.symbol}</div>
+                    <div class="sym-sub">{p.qty}주 · ${float(p.current_price):.2f}</div>
+                  </div>
+                  <div style="text-align:right">
+                    <div style="font-weight:700;color:{color}">{pnl_v:+.2f}</div>
+                    <div style="font-size:12px;color:{color}">{pct:+.1f}%</div>
+                  </div>
+                </div>""")
+            st.markdown(f'<div class="toss-card">{"".join(rows)}</div>', unsafe_allow_html=True)
         else:
-            st.info("보유 포지션 없음")
+            st.markdown('<div class="toss-card" style="color:#8E8E93;text-align:center;padding:32px;">보유 포지션 없음</div>', unsafe_allow_html=True)
     except Exception as e:
         st.error(f"포지션 오류: {e}")
 
-    st.divider()
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
 
-    # ── 전 종목 신호 ─────────────────────────────────────────
-    st.subheader("🔍 전 종목 신호")
+    st.markdown('<div class="section-title">종목 신호</div>', unsafe_allow_html=True)
     try:
+        rows = []
         for sym in TRADE_SYMBOLS:
-            df_sym = get_bars(sym, days=10)
+            df_sym = get_bars(sym, days=5)
             sig, _ = get_signal(df_sym)
-            icon = "🟢" if sig == Signal.BUY else "🔴" if sig == Signal.SELL else "⚪"
-            st.write(f"{icon} **{sym}** — {sig.value}")
+            badge  = "badge-buy" if sig == Signal.BUY else "badge-sell" if sig == Signal.SELL else "badge-hold"
+            label  = "매수" if sig == Signal.BUY else "매도" if sig == Signal.SELL else "홀드"
+            rows.append(f"""
+            <div class="sym-row">
+              <div class="sym-name">{sym}</div>
+              <span class="badge {badge}">{label}</span>
+            </div>""")
+        st.markdown(f'<div class="toss-card">{"".join(rows)}</div>', unsafe_allow_html=True)
     except Exception as e:
         st.error(f"신호 오류: {e}")
 
 st.divider()
 
+# ── 종목 스캐너 ────────────────────────────────────────────
+st.markdown('<div class="section-title">오늘의 스캔 종목</div>', unsafe_allow_html=True)
+
+sc1, sc2, sc3 = st.columns([1, 1, 1])
+gap_thr   = sc1.number_input("갭 기준 (%)", min_value=0.5, max_value=10.0, value=2.0, step=0.5)
+vol_ratio = sc2.number_input("거래량 배수 (20일 평균)", min_value=1.0, max_value=10.0, value=1.5, step=0.5)
+top_n     = sc3.number_input("최대 종목 수", min_value=1, max_value=20, value=5, step=1)
+
+if st.button("스캔 실행", type="primary"):
+    with st.spinner("스캔 중... (약 10초)"):
+        try:
+            results = scan_market(top_n=int(top_n), gap_threshold=gap_thr, vol_ratio_min=vol_ratio)
+            st.session_state.scan_results = results
+        except Exception as e:
+            st.error(f"스캔 오류: {e}")
+
+# 스캔 결과 표시
+if st.session_state.scan_results:
+    st.markdown("**클릭하면 위 차트에서 바로 확인할 수 있어요**", )
+    cols = st.columns(len(st.session_state.scan_results))
+    for i, r in enumerate(st.session_state.scan_results):
+        with cols[i]:
+            arrow  = "▲" if r.direction == "up" else "▼"
+            color  = "#00D278" if r.direction == "up" else "#FF4747"
+            active = "border:2px solid #3182F6;" if r.symbol == st.session_state.chart_symbol else ""
+            st.markdown(f"""
+            <div class="toss-card" style="text-align:center;padding:16px 12px;{active}">
+              <div style="font-size:16px;font-weight:700;color:#F5F5F5">{r.symbol}</div>
+              <div style="font-size:22px;font-weight:800;color:{color};margin:4px 0">{arrow} {r.gap_pct:+.1f}%</div>
+              <div style="font-size:12px;color:#8E8E93">거래량 {r.vol_ratio:.1f}x</div>
+              <div style="font-size:12px;color:#8E8E93">${r.price:.2f}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button(f"{r.symbol} 차트 보기", key=f"scan_{r.symbol}", use_container_width=True):
+                st.session_state.chart_symbol = r.symbol
+                st.rerun()
+elif "scan_results" in st.session_state and len(st.session_state.scan_results) == 0:
+    # 버튼을 눌렀는데 결과 없는 경우
+    st.markdown('<div class="toss-card" style="color:#8E8E93;text-align:center;padding:24px;">조건을 만족하는 종목 없음<br><span style="font-size:12px">갭 기준이나 거래량 배수를 낮춰보세요</span></div>', unsafe_allow_html=True)
+
+st.divider()
+
 # ── 백테스트 결과 ──────────────────────────────────────────
-st.subheader("📉 백테스트 결과")
+st.markdown('<div class="section-title">백테스트 결과</div>', unsafe_allow_html=True)
 bt_days = st.slider("백테스트 기간 (일)", 30, 180, 90, key="bt_days")
 
 bt_cols = st.columns(len(TRADE_SYMBOLS))
 for i, sym in enumerate(TRADE_SYMBOLS):
     try:
-        df_bt = get_bars(sym, days=bt_days)
+        df_bt  = get_bars(sym, days=bt_days)
         result = run_backtest(df_bt, sym)
+        color  = "#00D278" if result.total_return_pct >= 0 else "#FF4747"
 
         with bt_cols[i]:
-            st.metric(
-                label=sym,
-                value=f"{result.total_return_pct:+.2f}%",
-                delta=f"승률 {result.win_rate:.0f}% | {len(result.trades)}건"
-            )
+            st.markdown(f"""
+            <div class="toss-card">
+              <div style="color:#8E8E93;font-size:13px;font-weight:500">{sym}</div>
+              <div style="font-size:28px;font-weight:800;color:{color};letter-spacing:-1px;margin:6px 0">
+                {result.total_return_pct:+.2f}%
+              </div>
+              <div style="color:#8E8E93;font-size:12px">
+                승률 <span style="color:#F5F5F5;font-weight:600">{result.win_rate:.0f}%</span>
+                &nbsp;·&nbsp; {len(result.trades)}건
+              </div>
+              <div style="color:#8E8E93;font-size:12px;margin-top:4px">
+                MDD <span style="color:#F5F5F5;font-weight:600">{result.mdd:.1f}%</span>
+                &nbsp;·&nbsp; 샤프 <span style="color:#F5F5F5;font-weight:600">{result.sharpe:.2f}</span>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-            # 자산 곡선
             if result.equity_curve:
-                fig_eq = px.line(y=result.equity_curve, labels={"y": "자산", "index": ""})
-                fig_eq.update_layout(height=120, margin=dict(l=0, r=0, t=0, b=0), showlegend=False)
-                fig_eq.update_traces(line_color="green" if result.total_return_pct >= 0 else "red")
+                fig_eq = px.line(y=result.equity_curve)
+                fig_eq.update_layout(
+                    height=100,
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    margin=dict(l=0, r=0, t=0, b=0),
+                    showlegend=False,
+                    xaxis=dict(visible=False),
+                    yaxis=dict(visible=False),
+                )
+                fig_eq.update_traces(line_color=color, line_width=2)
                 st.plotly_chart(fig_eq, use_container_width=True)
 
-            st.caption(f"MDD {result.mdd:.1f}% | 샤프 {result.sharpe:.2f}")
     except Exception as e:
         bt_cols[i].error(f"{sym}: {e}")
