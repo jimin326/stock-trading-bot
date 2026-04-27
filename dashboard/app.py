@@ -12,6 +12,7 @@ from src.data_feed import get_bars
 from src.indicators import add_indicators
 from src.strategy import get_signal, Signal
 from src.backtest import run_backtest
+from src.scanner import scan_market
 from src.config import TRADE_SYMBOLS
 
 st.set_page_config(page_title="Stock Trading Bot", layout="wide", page_icon="📈")
@@ -303,6 +304,41 @@ with col_right:
         st.markdown(f'<div class="toss-card">{"".join(rows)}</div>', unsafe_allow_html=True)
     except Exception as e:
         st.error(f"신호 오류: {e}")
+
+st.divider()
+
+# ── 종목 스캐너 ────────────────────────────────────────────
+st.markdown('<div class="section-title">오늘의 스캔 종목</div>', unsafe_allow_html=True)
+sc1, sc2, sc3 = st.columns([1, 1, 1])
+gap_thr   = sc1.number_input("갭 기준 (%)", min_value=0.5, max_value=10.0, value=2.0, step=0.5)
+vol_ratio = sc2.number_input("거래량 배수", min_value=1.0, max_value=10.0, value=1.5, step=0.5)
+top_n     = sc3.number_input("최대 종목 수", min_value=1, max_value=20, value=5, step=1)
+
+if st.button("스캔 실행", type="primary"):
+    with st.spinner("스캔 중..."):
+        try:
+            scan_res = scan_market(top_n=int(top_n), gap_threshold=gap_thr, vol_ratio_min=vol_ratio)
+            if scan_res:
+                rows = []
+                for r in scan_res:
+                    arrow = "▲" if r.direction == "up" else "▼"
+                    color = "#00D278" if r.direction == "up" else "#FF4747"
+                    rows.append(f"""
+                    <div class="sym-row">
+                      <div>
+                        <div class="sym-name">{r.symbol}</div>
+                        <div class="sym-sub">${r.price:.2f}</div>
+                      </div>
+                      <div style="text-align:right">
+                        <div style="font-weight:700;color:{color}">{arrow} {r.gap_pct:+.1f}%</div>
+                        <div style="font-size:12px;color:#8E8E93">거래량 {r.vol_ratio:.1f}x</div>
+                      </div>
+                    </div>""")
+                st.markdown(f'<div class="toss-card">{"".join(rows)}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="toss-card" style="color:#8E8E93;text-align:center;padding:24px;">조건을 만족하는 종목 없음<br><span style="font-size:12px">장 마감 또는 변동성 부족</span></div>', unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"스캔 오류: {e}")
 
 st.divider()
 

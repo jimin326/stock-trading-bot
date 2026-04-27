@@ -11,8 +11,8 @@ class Signal(Enum):
     HOLD = "HOLD"
 
 
-def get_signal(df: pd.DataFrame, ema_period: int | None = None) -> tuple[Signal, str]:
-    df = add_indicators(df, ema_period=ema_period)
+def get_signal(df: pd.DataFrame) -> tuple[Signal, str]:
+    df = add_indicators(df)
 
     if len(df) < 2:
         return Signal.HOLD, "데이터 부족"

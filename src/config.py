@@ -7,40 +7,35 @@ ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
 ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
 
-TRADE_SYMBOLS = ["AAPL", "TSLA", "NVDA", "MSFT"]
+TRADE_SYMBOLS = ["AAPL", "TSLA", "NVDA", "MSFT"]  # 스캐너 없을 때 기본 대상
 
-TIMEFRAME = "15Min"  # 기본값 (종목별 설정 없을 때 사용)
-
-# 종목별 최적 타임프레임 (optimize.py 실행 후 자동 업데이트)
-SYMBOL_TIMEFRAME: dict[str, str] = {
-    "AAPL": "5Min",
-    "TSLA": "5Min",
-    "NVDA": "1Hour",
-    "MSFT": "1Hour",
-}
-
-# 종목별 최적 EMA 기간 (optimize.py 실행 후 자동 업데이트)
-SYMBOL_EMA: dict[str, int] = {
-    "AAPL": 21,
-    "TSLA": 12,
-    "NVDA": 5,
-    "MSFT": 5,
-}
-
-def get_timeframe(symbol: str) -> str:
-    return SYMBOL_TIMEFRAME.get(symbol, TIMEFRAME)
-
-def get_ema_period(symbol: str) -> int:
-    return SYMBOL_EMA.get(symbol, EMA_PERIOD)
-
+TIMEFRAME  = "5Min"
 EMA_PERIOD = 9
 
-VOLUME_PROFILE_WINDOW = 60   # 볼륨 프로파일 계산에 사용할 봉 수
-VOLUME_PROFILE_BINS = 20     # 가격대 분할 수
-VOLUME_EMPTY_RATIO = 0.4     # 평균 대비 이 비율 미만이면 "매물 없음"으로 판단
+VOLUME_PROFILE_WINDOW = 60
+VOLUME_PROFILE_BINS   = 20
+VOLUME_EMPTY_RATIO    = 0.4
 
-EMA_TOUCH_PCT = 0.003        # EMA 터치 인정 범위 (0.3%)
-SIDEWAYS_WINDOW = 6          # 횡보 판단에 사용할 최근 봉 수
-SIDEWAYS_CROSS_THRESHOLD = 2 # 이 횟수 이상 VWAP 교차 시 횡보로 판단
+EMA_TOUCH_PCT            = 0.003
+SIDEWAYS_WINDOW          = 6
+SIDEWAYS_CROSS_THRESHOLD = 2
 
 MAX_POSITION_PCT = 0.1
+
+# ── 종목 스캐너 설정 ──────────────────────────────────────────
+GAP_THRESHOLD     = 2.0   # 갭 기준 (%)
+VOL_RATIO_MIN     = 1.5   # 전일 대비 거래량 배수 하한
+SCAN_TOP_N        = 5     # 최종 선정 종목 수
+
+# 스캔 유니버스 — S&P500 대형주 + 고변동성 인기 종목
+SCAN_UNIVERSE = [
+    "AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AVGO",
+    "JPM","LLY","V","UNH","XOM","MA","HD","PG","COST","ORCL",
+    "ABBV","WMT","BAC","CVX","MRK","KO","NFLX","CRM","AMD",
+    "PEP","TMO","ADBE","ACN","DHR","MCD","ABT","CSCO","TXN",
+    "QCOM","HON","LOW","ISRG","BKNG","GS","MS","AMAT","SYK",
+    "GILD","MDT","DE","NOW","ADI","SBUX","VRTX","MU","LRCX",
+    "PANW","KLAC","MELI","REGN","CI","ZTS","CME","UBER","PYPL",
+    "COIN","PLTR","SOFI","RIVN","NIO","SHOP","SPOT","SNAP","SQ",
+    "RBLX","U","HOOD","F","GM","INTC","ARM","SMCI","MSTR",
+]

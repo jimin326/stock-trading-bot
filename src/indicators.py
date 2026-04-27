@@ -4,11 +4,10 @@ import ta
 import src.config as config
 
 
-def add_indicators(df: pd.DataFrame, ema_period: int | None = None) -> pd.DataFrame:
+def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    period = ema_period if ema_period is not None else config.EMA_PERIOD
 
-    df["ema9"] = ta.trend.EMAIndicator(df["close"], window=period).ema_indicator()
+    df["ema9"] = ta.trend.EMAIndicator(df["close"], window=config.EMA_PERIOD).ema_indicator()
     df["vwap"] = _calc_vwap(df)
     df["vp_empty_above"], df["vp_empty_below"] = _calc_volume_profile(df)
 
