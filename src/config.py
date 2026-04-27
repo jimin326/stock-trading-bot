@@ -9,7 +9,29 @@ ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets
 
 TRADE_SYMBOLS = ["AAPL", "TSLA", "NVDA", "MSFT"]
 
-TIMEFRAME = "15Min"
+TIMEFRAME = "15Min"  # 기본값 (종목별 설정 없을 때 사용)
+
+# 종목별 최적 타임프레임 (optimize.py 실행 후 자동 업데이트)
+SYMBOL_TIMEFRAME: dict[str, str] = {
+    "AAPL": "5Min",
+    "TSLA": "5Min",
+    "NVDA": "1Hour",
+    "MSFT": "1Hour",
+}
+
+# 종목별 최적 EMA 기간 (optimize.py 실행 후 자동 업데이트)
+SYMBOL_EMA: dict[str, int] = {
+    "AAPL": 21,
+    "TSLA": 12,
+    "NVDA": 5,
+    "MSFT": 5,
+}
+
+def get_timeframe(symbol: str) -> str:
+    return SYMBOL_TIMEFRAME.get(symbol, TIMEFRAME)
+
+def get_ema_period(symbol: str) -> int:
+    return SYMBOL_EMA.get(symbol, EMA_PERIOD)
 
 EMA_PERIOD = 9
 

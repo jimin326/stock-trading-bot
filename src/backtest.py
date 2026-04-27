@@ -3,7 +3,7 @@ import numpy as np
 from dataclasses import dataclass, field
 
 from src.indicators import add_indicators
-from src.config import MAX_POSITION_PCT
+from src.config import MAX_POSITION_PCT, get_ema_period, get_timeframe
 from src.risk import should_exit_long, should_exit_short
 
 
@@ -93,7 +93,7 @@ class BacktestResult:
 
 
 def run_backtest(df: pd.DataFrame, symbol: str, initial_equity: float = 10000.0) -> BacktestResult:
-    df = add_indicators(df).dropna(subset=["ema9", "vwap"])
+    df = add_indicators(df, ema_period=get_ema_period(symbol)).dropna(subset=["ema9", "vwap"])
     result = BacktestResult(symbol=symbol, initial_equity=initial_equity)
 
     equity = initial_equity
@@ -191,7 +191,7 @@ if __name__ == "__main__":
     symbols = ["AAPL", "TSLA", "NVDA", "MSFT"]
 
     for symbol in symbols:
-        df = get_bars(symbol, days=90)
+        df = get_bars(symbol, days=90, timeframe=get_timeframe(symbol))
         result = run_backtest(df, symbol)
         result.summary()
 

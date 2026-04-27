@@ -5,7 +5,7 @@ from src.broker import get_account, get_position, buy_market, sell_market, cance
 from src.data_feed import get_bars
 from src.strategy import get_signal, Signal
 from src.risk import position_size, should_stop_loss, should_take_profit
-from src.config import TRADE_SYMBOLS
+from src.config import TRADE_SYMBOLS, get_timeframe, get_ema_period
 
 
 def is_market_open() -> bool:
@@ -33,7 +33,7 @@ def run(symbols: list[str] = TRADE_SYMBOLS, interval_sec: int = 300):
             print(f"\n[{datetime.now().strftime('%H:%M:%S')}] 자산 ${equity:,.2f} | 오늘 손익 ${acct['pnl']:+,.2f}")
 
             for symbol in symbols:
-                df = get_bars(symbol, days=5)
+                df = get_bars(symbol, days=5, timeframe=get_timeframe(symbol))
                 if df.empty:
                     continue
 
@@ -56,7 +56,7 @@ def run(symbols: list[str] = TRADE_SYMBOLS, interval_sec: int = 300):
                         continue
 
                 # 신호 확인
-                signal, reason = get_signal(df)
+                signal, reason = get_signal(df, ema_period=get_ema_period(symbol))
 
                 if signal == Signal.BUY and not position:
                     qty = position_size(equity, current_price)
