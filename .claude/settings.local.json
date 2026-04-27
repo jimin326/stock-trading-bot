@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($env:PATH = $env:PATH + \";C:\\\\Program Files\\\\GitHub CLI\"; cd \"C:\\\\SKKU\\\\stockProgram\"; gh repo create stock-trading-bot --public --description \"US Stock Day Trading Bot using Alpaca API\" --source . --remote origin)"
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+# 환경변수 (API 키 절대 커밋 금지)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# 데이터/로그 (용량 큰 파일)
+data/*.csv
+data/*.parquet
+logs/*.log
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
