@@ -20,6 +20,7 @@ SIDEWAYS_WINDOW          = 6
 SIDEWAYS_CROSS_THRESHOLD = 3
 
 MAX_POSITION_PCT = 0.1
+HARD_STOP_PCT    = 0.03   # 하드 손절 -3%
 
 # ── 종목 스캐너 설정 ──────────────────────────────────────────
 GAP_THRESHOLD     = 2.0   # 갭 기준 (%)

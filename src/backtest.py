@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from src.indicators import add_indicators
 from src.config import MAX_POSITION_PCT, TIMEFRAME
-from src.risk import should_exit_long, should_exit_short
+from src.risk import check_exit_long, check_exit_short
 
 
 @dataclass
@@ -113,21 +113,17 @@ def run_backtest(df: pd.DataFrame, symbol: str, initial_equity: float = 10000.0)
         is_bearish = close < open_
         result.equity_curve.append(equity)
 
-        # 포지션 보유 중 → EMA9 기준 청산 체크
+        # 포지션 보유 중 → 청산 체크 (EMA9 돌파 or 하드 손절)
         if position:
-            if position.side == "long" and should_exit_long(close, ema9):
-                position.exit_time = row.name
-                position.exit_price = close
-                position.reason = "EMA9하향이탈"
-                equity += position.pnl
-                result.trades.append(position)
-                position = None
-                continue
+            if position.side == "long":
+                do_exit, exit_price, reason = check_exit_long(close, low, ema9, position.entry_price)
+            else:
+                do_exit, exit_price, reason = check_exit_short(close, high, ema9, position.entry_price)
 
-            if position.side == "short" and should_exit_short(close, ema9):
-                position.exit_time = row.name
-                position.exit_price = close
-                position.reason = "EMA9상향이탈"
+            if do_exit:
+                position.exit_time  = row.name
+                position.exit_price = exit_price
+                position.reason     = reason
                 equity += position.pnl
                 result.trades.append(position)
                 position = None

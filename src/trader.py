@@ -4,7 +4,7 @@ from datetime import datetime, date
 from src.broker import get_account, get_position, buy_market, sell_market, cancel_all_orders
 from src.data_feed import get_bars
 from src.strategy import get_signal, Signal
-from src.risk import position_size, should_stop_loss, should_take_profit
+from src.risk import position_size, check_exit_long, check_exit_short
 from src.scanner import scan_market
 import src.config as config
 
@@ -54,20 +54,24 @@ def run(interval_sec: int = 300):
                 if df.empty:
                     continue
 
-                current_price = df["close"].iloc[-1]
-                position = get_position(symbol)
+                from src.indicators import add_indicators
+                df_ind        = add_indicators(df)
+                current_price = df_ind["close"].iloc[-1]
+                ema9          = df_ind["ema9"].iloc[-1]
+                position      = get_position(symbol)
 
                 if position:
-                    entry = float(position.avg_entry_price)
-                    qty   = int(position.qty)
+                    entry    = float(position.avg_entry_price)
+                    qty      = int(position.qty)
+                    side     = "long" if float(position.qty) > 0 else "short"
 
-                    if should_stop_loss(entry, current_price):
-                        print(f"  [{symbol}] 손절 | 진입 ${entry:.2f} → 현재 ${current_price:.2f}")
-                        sell_market(symbol, qty)
-                        continue
+                    if side == "long":
+                        do_exit, _, reason = check_exit_long(current_price, current_price, ema9, entry)
+                    else:
+                        do_exit, _, reason = check_exit_short(current_price, current_price, ema9, entry)
 
-                    if should_take_profit(entry, current_price):
-                        print(f"  [{symbol}] 익절 | 진입 ${entry:.2f} → 현재 ${current_price:.2f}")
+                    if do_exit:
+                        print(f"  [{symbol}] 청산({reason}) | 진입 ${entry:.2f} → 현재 ${current_price:.2f}")
                         sell_market(symbol, qty)
                         continue
 
