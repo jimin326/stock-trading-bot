@@ -9,7 +9,7 @@ ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets
 
 TRADE_SYMBOLS = ["AAPL", "TSLA", "NVDA", "MSFT"]
 
-TIMEFRAME = "5Min"
+TIMEFRAME = "15Min"
 
 RSI_PERIOD = 14
 RSI_OVERSOLD = 30
