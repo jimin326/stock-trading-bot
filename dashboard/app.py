@@ -333,15 +333,16 @@ if "bt_result" in st.session_state:
 
         trade_data = []
         for t in result.trades:
-            pnl_color = "#00D278" if t.pnl_pct >= 0 else "#FF4747"
             trade_data.append({
-                "날짜":   t.entry_time.strftime("%m/%d"),
-                "종목":   t.symbol,
-                "방향":   "▲ 롱" if t.side == "long" else "▼ 숏",
-                "진입가": f"${t.entry_price:.2f}",
-                "청산가": f"${t.exit_price:.2f}" if t.exit_price else "-",
-                "수익률": f"{t.pnl_pct:+.2f}%",
-                "청산사유": t.reason,
+                "날짜":    t.entry_time.strftime("%m/%d"),
+                "진입시간": t.entry_time.strftime("%H:%M"),
+                "청산시간": t.exit_time.strftime("%H:%M") if t.exit_time else "-",
+                "종목":    t.symbol,
+                "방향":    "▲ 롱" if t.side == "long" else "▼ 숏",
+                "진입가":  f"${t.entry_price:.2f}",
+                "청산가":  f"${t.exit_price:.2f}" if t.exit_price else "-",
+                "수익률":  f"{t.pnl_pct:+.2f}%",
+                "사유":    t.reason,
             })
 
         df_trades = pd.DataFrame(trade_data)
@@ -351,7 +352,7 @@ if "bt_result" in st.session_state:
             color = "#00D278" if val.startswith("+") else "#FF4747"
             return f"color: {color}; font-weight: 600"
 
-        styled = df_trades.style.applymap(color_pnl, subset=["수익률"])
+        styled = df_trades.style.map(color_pnl, subset=["수익률"])
         st.dataframe(
             styled,
             use_container_width=True,

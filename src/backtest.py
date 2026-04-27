@@ -116,9 +116,9 @@ def run_backtest(df: pd.DataFrame, symbol: str, initial_equity: float = 10000.0)
         # 포지션 보유 중 → 청산 체크 (EMA9 돌파 or 하드 손절)
         if position:
             if position.side == "long":
-                do_exit, exit_price, reason = check_exit_long(close, low, ema9, position.entry_price)
+                do_exit, exit_price, reason = check_exit_long(close, open_, low, ema9, position.entry_price)
             else:
-                do_exit, exit_price, reason = check_exit_short(close, high, ema9, position.entry_price)
+                do_exit, exit_price, reason = check_exit_short(close, open_, high, ema9, position.entry_price)
 
             if do_exit:
                 position.exit_time  = row.name
@@ -305,9 +305,9 @@ def run_scanner_backtest(
 
                 if position:
                     if position.side == "long":
-                        do_exit, exit_price, reason = check_exit_long(close, low, ema9, position.entry_price)
+                        do_exit, exit_price, reason = check_exit_long(close, open_, low, ema9, position.entry_price)
                     else:
-                        do_exit, exit_price, reason = check_exit_short(close, high, ema9, position.entry_price)
+                        do_exit, exit_price, reason = check_exit_short(close, open_, high, ema9, position.entry_price)
 
                     if do_exit:
                         position.exit_time  = row.name

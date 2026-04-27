@@ -65,10 +65,11 @@ def run(interval_sec: int = 300):
                     qty      = int(position.qty)
                     side     = "long" if float(position.qty) > 0 else "short"
 
+                    current_open = df_ind["open"].iloc[-1]
                     if side == "long":
-                        do_exit, _, reason = check_exit_long(current_price, current_price, ema9, entry)
+                        do_exit, _, reason = check_exit_long(current_price, current_open, current_price, ema9, entry)
                     else:
-                        do_exit, _, reason = check_exit_short(current_price, current_price, ema9, entry)
+                        do_exit, _, reason = check_exit_short(current_price, current_open, current_price, ema9, entry)
 
                     if do_exit:
                         print(f"  [{symbol}] 청산({reason}) | 진입 ${entry:.2f} → 현재 ${current_price:.2f}")
