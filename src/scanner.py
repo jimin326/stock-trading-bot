@@ -1,8 +1,9 @@
 """
 장 시작 전 또는 장중에 실행해서 오늘 터질 종목을 찾아 반환한다.
-조건: 갭상승/하락 + 거래량 급증
+조건: 갭상승/하락 + 20일 평균 대비 거래량 급증
 """
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 import src.config as config
 
@@ -10,15 +11,15 @@ import src.config as config
 @dataclass
 class ScanResult:
     symbol: str
-    gap_pct: float       # 갭 (%)
-    vol_ratio: float     # 전일 대비 거래량 배수
-    price: float         # 현재가
-    direction: str       # "up" | "down"
+    gap_pct: float
+    vol_ratio: float   # 오늘 거래량 / 20일 평균 거래량
+    price: float
+    direction: str     # "up" | "down"
 
     def __str__(self):
         arrow = "▲" if self.direction == "up" else "▼"
         return (f"{self.symbol:6s} {arrow} 갭 {self.gap_pct:+.1f}%  "
-                f"거래량 {self.vol_ratio:.1f}x  ${self.price:.2f}")
+                f"거래량 {self.vol_ratio:.1f}x (20일평균)  ${self.price:.2f}")
 
 
 def scan_market(
@@ -27,32 +28,58 @@ def scan_market(
     vol_ratio_min: float | None = None,
 ) -> list[ScanResult]:
     from alpaca.data.historical import StockHistoricalDataClient
-    from alpaca.data.requests import StockSnapshotRequest
+    from alpaca.data.requests import StockSnapshotRequest, StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+    from alpaca.data.enums import DataFeed
 
-    top_n         = top_n or config.SCAN_TOP_N
+    top_n         = top_n         or config.SCAN_TOP_N
     gap_threshold = gap_threshold or config.GAP_THRESHOLD
     vol_ratio_min = vol_ratio_min or config.VOL_RATIO_MIN
 
     client = StockHistoricalDataClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY)
 
-    # 유니버스 전체 스냅샷 한 번에 조회
-    req = StockSnapshotRequest(symbol_or_symbols=config.SCAN_UNIVERSE)
+    # 1) 스냅샷 — 갭 + 오늘 거래량
     try:
-        snapshots = client.get_stock_snapshot(req)
+        snap_req  = StockSnapshotRequest(symbol_or_symbols=config.SCAN_UNIVERSE)
+        snapshots = client.get_stock_snapshot(snap_req)
     except Exception as e:
         print(f"[scanner] 스냅샷 조회 실패: {e}")
         return []
+
+    # 2) 20일치 일봉 — 평균 거래량 계산
+    try:
+        bar_req = StockBarsRequest(
+            symbol_or_symbols=config.SCAN_UNIVERSE,
+            timeframe=TimeFrame.Day,
+            start=datetime.now() - timedelta(days=35),  # 35일 치 요청 → 영업일 20일 확보
+            feed=DataFeed.IEX,
+        )
+        bars_dict = client.get_stock_bars(bar_req)
+    except Exception as e:
+        print(f"[scanner] 일봉 조회 실패: {e}")
+        bars_dict = {}
+
+    # 종목별 20일 평균 거래량 (오늘 봉 제외)
+    avg_volumes: dict[str, float] = {}
+    for sym, bars in bars_dict.data.items():
+        full_days = bars[:-1][-20:]  # 오늘 제외, 최근 20영업일
+        if full_days:
+            avg_volumes[sym] = sum(b.volume for b in full_days) / len(full_days)
 
     candidates: list[ScanResult] = []
     for symbol, snap in snapshots.items():
         try:
             daily = snap.daily_bar
             prev  = snap.previous_daily_bar
-            if not daily or not prev or prev.close == 0 or prev.volume == 0:
+            if not daily or not prev or prev.close == 0:
+                continue
+
+            avg_vol = avg_volumes.get(symbol, 0)
+            if avg_vol == 0:
                 continue
 
             gap_pct   = (daily.open - prev.close) / prev.close * 100
-            vol_ratio = daily.volume / prev.volume
+            vol_ratio = daily.volume / avg_vol
 
             if abs(gap_pct) < gap_threshold or vol_ratio < vol_ratio_min:
                 continue
@@ -67,7 +94,6 @@ def scan_market(
         except Exception:
             continue
 
-    # 갭 크기 × 거래량 배수로 정렬
     candidates.sort(key=lambda x: abs(x.gap_pct) * x.vol_ratio, reverse=True)
     return candidates[:top_n]
 
