@@ -79,9 +79,9 @@ def scan_market(
                 continue
 
             gap_pct   = (daily.open - prev.close) / prev.close * 100
-            vol_ratio = prev.volume / avg_vol  # 어제 거래량 / 20일 평균
+            vol_ratio = daily.volume / avg_vol  # 오늘 거래량 / 20일 평균
 
-            if vol_ratio < 1.0:
+            if vol_ratio < vol_ratio_min:
                 continue
 
             candidates.append(ScanResult(

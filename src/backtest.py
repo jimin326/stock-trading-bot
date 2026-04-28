@@ -14,6 +14,7 @@ class Trade:
     entry_time: pd.Timestamp
     entry_price: float
     qty: int
+    confidence: int = 0
     exit_time: pd.Timestamp = None
     exit_price: float = None
     reason: str = ""
@@ -86,6 +87,28 @@ class BacktestResult:
         mean = np.mean(returns)
         std = np.std(returns)
         return round(mean / std * np.sqrt(252) if std > 0 else 0.0, 2)
+
+    def confidence_breakdown(self):
+        print(f"\n  {'확신도':>4} │ {'거래':>5} {'승':>5} {'패':>5} {'승률':>7} {'평균수익':>9} {'총수익':>10}")
+        print(f"  {'─'*4}─┼─{'─'*5}─{'─'*5}─{'─'*5}─{'─'*7}─{'─'*9}─{'─'*10}")
+        for conf in [1, 2, 3]:
+            trades = [t for t in self.trades if t.confidence == conf]
+            if not trades:
+                print(f"  {conf:4d} │  데이터 없음")
+                continue
+            wins   = [t for t in trades if t.pnl > 0]
+            losses = [t for t in trades if t.pnl <= 0]
+            wr     = len(wins) / len(trades) * 100
+            avg    = np.mean([t.pnl_pct for t in trades])
+            total  = sum(t.pnl for t in trades)
+            print(f"  {conf:4d} │ {len(trades):5d} {len(wins):5d} {len(losses):5d} {wr:6.1f}% {avg:+8.2f}% ${total:+9.2f}")
+        all_trades = self.trades
+        if all_trades:
+            wins = [t for t in all_trades if t.pnl > 0]
+            wr   = len(wins) / len(all_trades) * 100
+            avg  = np.mean([t.pnl_pct for t in all_trades])
+            total = sum(t.pnl for t in all_trades)
+            print(f"  {'합계':>4} │ {len(all_trades):5d} {len(wins):5d} {len(all_trades)-len(wins):5d} {wr:6.1f}% {avg:+8.2f}% ${total:+9.2f}")
 
     def summary(self):
         total_fee = sum(t.fee for t in self.trades)
@@ -212,10 +235,10 @@ def run_backtest(df: pd.DataFrame, symbol: str, initial_equity: float = 10000.0,
             qty = position_size(equity, entry_price, confidence)
             if side == "long" and equity >= entry_price * qty:
                 position = Trade(symbol=symbol, side="long",
-                                 entry_time=next_row.name, entry_price=entry_price, qty=qty)
+                                 entry_time=next_row.name, entry_price=entry_price, qty=qty, confidence=confidence)
             elif side == "short" and not long_only:
                 position = Trade(symbol=symbol, side="short",
-                                 entry_time=next_row.name, entry_price=entry_price, qty=qty)
+                                 entry_time=next_row.name, entry_price=entry_price, qty=qty, confidence=confidence)
 
     # 마지막 포지션 강제 청산
     if position:
@@ -391,10 +414,10 @@ def run_scanner_backtest(
                     qty = position_size(equity, entry_price, confidence)
                     if side == "long" and equity >= entry_price * qty:
                         position = Trade(symbol=sym, side="long",
-                                         entry_time=next_row.name, entry_price=entry_price, qty=qty)
+                                         entry_time=next_row.name, entry_price=entry_price, qty=qty, confidence=confidence)
                     elif side == "short" and sym in shortable:
                         position = Trade(symbol=sym, side="short",
-                                         entry_time=next_row.name, entry_price=entry_price, qty=qty)
+                                         entry_time=next_row.name, entry_price=entry_price, qty=qty, confidence=confidence)
 
             if position:
                 last = day_df.iloc[-1]

@@ -36,7 +36,7 @@ def close_all_for_eod():
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 장마감 임박 — 포지션 전체 청산")
     for p in positions:
         symbol = p.symbol
-        qty    = abs(int(float(p.qty)))
+        qty    = abs(float(p.qty))
         side   = "long" if float(p.qty) > 0 else "short"
         entry  = float(p.avg_entry_price)
         try:
@@ -111,6 +111,8 @@ def run(interval_sec: int = 300):
                 current_price = df_ind["close"].iloc[-1]
                 ema9          = df_ind["ema9"].iloc[-1]
                 cur_open      = df_ind["open"].iloc[-1]
+                cur_low       = df_ind["low"].iloc[-1]
+                cur_high      = df_ind["high"].iloc[-1]
                 position      = get_position(symbol)
 
                 # ── 포지션 청산 체크 ──────────────────────────────
@@ -121,11 +123,11 @@ def run(interval_sec: int = 300):
 
                     if side == "long":
                         do_exit, _, reason = check_exit_long(
-                            current_price, cur_open, current_price, ema9, entry,
+                            current_price, cur_open, cur_low, ema9, entry,
                             strict=config.STRICT_EXIT)
                     else:
                         do_exit, _, reason = check_exit_short(
-                            current_price, cur_open, current_price, ema9, entry,
+                            current_price, cur_open, cur_high, ema9, entry,
                             strict=config.STRICT_EXIT)
 
                     if do_exit:
