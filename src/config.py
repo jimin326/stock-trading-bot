@@ -10,13 +10,16 @@ ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets
 TRADE_SYMBOLS = ["AAPL", "TSLA", "NVDA", "MSFT"]  # 스캐너 없을 때 기본 대상
 
 TIMEFRAME  = "5Min"
-EMA_PERIOD = 9
+EMA_PERIOD = 8
 
 EMA_TOUCH_PCT      = 0.005  # EMA 눌림목 인정 범위 (0.5%)
 PULLBACK_LOWER_PCT = 0.02   # 눌림목 하한선: EMA9 기준 -2% 이내까지만 인정
 
 MAX_POSITION_PCT = 0.1
-HARD_STOP_PCT    = 0.03   # 하드 손절 -3%
+HARD_STOP_PCT    = 0.02   # 하드 손절 -2%
+
+SIDEWAYS_WINDOW    = 6    # 횡보 판단에 사용할 최근 캔들 수 (5분봉 기준 30분)
+SIDEWAYS_CROSSES   = 3    # 해당 구간에서 VWAP 교차 횟수 ≥ 이 값이면 횡보로 판단
 
 # ── 종목 스캐너 설정 ──────────────────────────────────────────
 GAP_THRESHOLD     = 2.0   # 갭 기준 (%)

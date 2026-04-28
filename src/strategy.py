@@ -2,13 +2,21 @@ from enum import Enum
 import pandas as pd
 
 from src.indicators import add_indicators, latest
-from src.config import EMA_TOUCH_PCT, PULLBACK_LOWER_PCT
+from src.config import EMA_TOUCH_PCT, PULLBACK_LOWER_PCT, SIDEWAYS_WINDOW, SIDEWAYS_CROSSES
 
 
 class Signal(Enum):
     BUY  = "BUY"
     SELL = "SELL"
     HOLD = "HOLD"
+
+
+def _is_sideways(df: pd.DataFrame) -> bool:
+    """최근 N캔들에서 VWAP 교차 횟수가 임계값 이상이면 횡보로 판단"""
+    recent = df.iloc[-SIDEWAYS_WINDOW:]
+    above  = recent["close"] > recent["vwap"]
+    crosses = (above != above.shift()).sum() - 1  # 첫 번째는 기준점이라 제외
+    return int(crosses) >= SIDEWAYS_CROSSES
 
 
 def get_signal(df: pd.DataFrame) -> tuple[Signal, str]:
@@ -27,6 +35,9 @@ def get_signal(df: pd.DataFrame) -> tuple[Signal, str]:
 
     if pd.isna(ema9) or pd.isna(vwap):
         return Signal.HOLD, "지표 계산 데이터 부족"
+
+    if _is_sideways(df):
+        return Signal.HOLD, f"횡보장 관망 (VWAP={vwap:.2f})"
 
     is_bullish = close > open_
     is_bearish = close < open_
