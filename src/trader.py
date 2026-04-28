@@ -75,20 +75,19 @@ def run(interval_sec: int = 300):
                         sell_market(symbol, qty)
                         continue
 
-                signal, reason = get_signal(df)
+                signal, reason, confidence = get_signal(df)
 
                 if signal == Signal.BUY and not position:
-                    qty  = position_size(equity, current_price)
+                    qty  = position_size(equity, current_price, confidence)
                     cost = qty * current_price
                     if cost <= acct["cash"] * 0.95:
-                        print(f"  [{symbol}] 매수 | {reason}")
+                        print(f"  [{symbol}] 매수(확신도{confidence}) | {reason}")
                         buy_market(symbol, qty)
 
                 elif signal == Signal.SELL and not position:
                     if is_shortable(symbol):
-                        qty = position_size(equity, current_price)
-                        print(f"  [{symbol}] 숏 진입 | {reason}")
-                        sell_market(symbol, qty)
+                        qty = position_size(equity, current_price, confidence)
+                        print(f"  [{symbol}] 숏 진입(확신도{confidence}) | {reason}")
                     else:
                         print(f"  [{symbol}] HOLD (공매도 불가) | {reason}")
 

@@ -3,8 +3,8 @@ import numpy as np
 from dataclasses import dataclass, field
 
 from src.indicators import add_indicators
-from src.config import MAX_POSITION_PCT, BACKTEST_UNIVERSE, GAP_THRESHOLD, VOL_RATIO_MIN, SCAN_TOP_N, EMA_TOUCH_PCT, PULLBACK_LOWER_PCT
-from src.risk import check_exit_long, check_exit_short
+from src.config import POSITION_SIZE_TIERS, BACKTEST_UNIVERSE, GAP_THRESHOLD, VOL_RATIO_MIN, SCAN_TOP_N, EMA_TOUCH_PCT, PULLBACK_LOWER_PCT, VWAP_TOUCH_PCT, SIDEWAYS_WINDOW, SIDEWAYS_CROSSES, COOLDOWN_BARS
+from src.risk import check_exit_long, check_exit_short, position_size
 
 
 @dataclass
@@ -19,22 +19,34 @@ class Trade:
     reason: str = ""
 
     @property
+    def fee(self) -> float:
+        """Alpaca 규제 수수료: SEC fee + FINRA TAF (매도 시 부과)"""
+        if self.exit_price is None:
+            return 0.0
+        sell_price  = self.exit_price if self.side == "long" else self.entry_price
+        sell_amount = sell_price * self.qty
+        sec_fee     = sell_amount * 0.0000278
+        finra_taf   = min(self.qty * 0.000166, 8.30)
+        return sec_fee + finra_taf
+
+    @property
     def pnl(self) -> float:
         if self.exit_price is None:
             return 0.0
         if self.side == "long":
-            return (self.exit_price - self.entry_price) * self.qty
+            return (self.exit_price - self.entry_price) * self.qty - self.fee
         else:
-            return (self.entry_price - self.exit_price) * self.qty
+            return (self.entry_price - self.exit_price) * self.qty - self.fee
 
     @property
     def pnl_pct(self) -> float:
         if self.exit_price is None:
             return 0.0
+        cost = self.entry_price * self.qty
         if self.side == "long":
-            return (self.exit_price - self.entry_price) / self.entry_price * 100
+            return (self.exit_price - self.entry_price) * self.qty / cost * 100
         else:
-            return (self.entry_price - self.exit_price) / self.entry_price * 100
+            return (self.entry_price - self.exit_price) * self.qty / cost * 100
 
 
 @dataclass
@@ -76,6 +88,7 @@ class BacktestResult:
         return round(mean / std * np.sqrt(252) if std > 0 else 0.0, 2)
 
     def summary(self):
+        total_fee = sum(t.fee for t in self.trades)
         print(f"\n{'='*45}")
         print(f"  백테스트 결과: {self.symbol}")
         print(f"{'='*45}")
@@ -86,6 +99,7 @@ class BacktestResult:
         print(f"  샤프 비율    : {self.sharpe:>10.2f}")
         print(f"  총 거래 수   : {len(self.trades):>10}건")
         print(f"  승률         : {self.win_rate:>9.1f}%")
+        print(f"  총 수수료    : ${total_fee:>10.2f}")
         if self.trades:
             avg_pnl = np.mean([t.pnl_pct for t in self.trades])
             print(f"  평균 수익률  : {avg_pnl:>+9.2f}%")
@@ -110,29 +124,46 @@ class BacktestResult:
             )
 
 
-def _check_entry(row: pd.Series, prev: pd.Series) -> str | None:
-    """EMA9 눌림목 진입 조건. 반환: 'long' | 'short' | None"""
+def _is_sideways(df: pd.DataFrame, i: int) -> bool:
+    """인덱스 i 기준 최근 N캔들에서 VWAP 교차 횟수 >= 임계값이면 횡보"""
+    start = max(0, i - SIDEWAYS_WINDOW + 1)
+    recent = df.iloc[start:i + 1]
+    above = recent["close"] > recent["vwap"]
+    crosses = int((above != above.shift()).sum()) - 1
+    return crosses >= SIDEWAYS_CROSSES
+
+
+def _check_entry(row: pd.Series, prev: pd.Series) -> tuple[str | None, int]:
+    """진입 조건 확인. 반환: (side, confidence) — side는 'long'|'short'|None"""
     close = row["close"]
     open_ = row["open"]
-    ema9  = row["ema9"]
+    ema8  = row["ema9"]
     vwap  = row["vwap"]
 
     is_bullish = close > open_
     is_bearish = close < open_
 
     if close > vwap:
-        pullback = (prev["low"] <= ema9 * (1 + EMA_TOUCH_PCT)
-                    and prev["low"] >= ema9 * (1 - PULLBACK_LOWER_PCT))
-        bounce   = is_bullish and close > ema9
-        if pullback and bounce:
-            return "long"
+        ema_pullback = (prev["low"] <= ema8 * (1 + EMA_TOUCH_PCT)
+                        and prev["low"] >= ema8 * (1 - PULLBACK_LOWER_PCT))
+        vwap_retest  = (prev["low"] <= vwap * (1 + VWAP_TOUCH_PCT)
+                        and prev["low"] >= vwap * (1 - VWAP_TOUCH_PCT))
+        bounce       = is_bullish and close > ema8
+        if bounce and (ema_pullback or vwap_retest):
+            score = 1 + int(ema_pullback and vwap_retest) + int(close > vwap * 1.005)
+            return "long", score
+
     elif close < vwap:
-        pullback = (prev["high"] >= ema9 * (1 - EMA_TOUCH_PCT)
-                    and prev["high"] <= ema9 * (1 + PULLBACK_LOWER_PCT))
-        bounce   = is_bearish and close < ema9
-        if pullback and bounce:
-            return "short"
-    return None
+        ema_pullback = (prev["high"] >= ema8 * (1 - EMA_TOUCH_PCT)
+                        and prev["high"] <= ema8 * (1 + PULLBACK_LOWER_PCT))
+        vwap_retest  = (prev["high"] >= vwap * (1 - VWAP_TOUCH_PCT)
+                        and prev["high"] <= vwap * (1 + VWAP_TOUCH_PCT))
+        bounce       = is_bearish and close < ema8
+        if bounce and (ema_pullback or vwap_retest):
+            score = 1 + int(ema_pullback and vwap_retest) + int(close < vwap * 0.995)
+            return "short", score
+
+    return None, 0
 
 
 def run_backtest(df: pd.DataFrame, symbol: str, initial_equity: float = 10000.0, long_only: bool = False) -> BacktestResult:
@@ -168,11 +199,13 @@ def run_backtest(df: pd.DataFrame, symbol: str, initial_equity: float = 10000.0,
                 position = None
             continue
 
-        side = _check_entry(row, prev)  # run_backtest는 PM 데이터 없이 실행
+        if _is_sideways(df, i):
+            continue
+        side, confidence = _check_entry(row, prev)
         if side and i + 1 < len(df):
-            next_row     = df.iloc[i + 1]
-            entry_price  = next_row["open"]
-            qty = max(int(equity * MAX_POSITION_PCT / entry_price), 1)
+            next_row    = df.iloc[i + 1]
+            entry_price = next_row["open"]
+            qty = position_size(equity, entry_price, confidence)
             if side == "long" and equity >= entry_price * qty:
                 position = Trade(symbol=symbol, side="long",
                                  entry_time=next_row.name, entry_price=entry_price, qty=qty)
@@ -199,6 +232,7 @@ def run_scanner_backtest(
     gap_threshold: float = GAP_THRESHOLD,
     vol_ratio_min: float = VOL_RATIO_MIN,
     top_n: int = SCAN_TOP_N,
+    cooldown_bars: int = COOLDOWN_BARS,
 ) -> BacktestResult:
     """매일 스캐너로 종목 선별 후 해당 종목만 거래하는 현실적인 백테스트"""
     from alpaca.data.historical import StockHistoricalDataClient
@@ -308,6 +342,7 @@ def run_scanner_backtest(
                 continue
 
             position = None
+            cooldown_until = -1
             for i in range(1, len(day_df)):
                 row   = day_df.iloc[i]
                 prev  = day_df.iloc[i - 1]
@@ -331,13 +366,18 @@ def run_scanner_backtest(
                         result.trades.append(position)
                         result.equity_curve.append(equity)
                         position = None
+                        cooldown_until = i + cooldown_bars
                     continue
 
-                side = _check_entry(row, prev)
+                if i <= cooldown_until:
+                    continue
+                if _is_sideways(day_df, i):
+                    continue
+                side, confidence = _check_entry(row, prev)
                 if side and i + 1 < len(day_df):
                     next_row    = day_df.iloc[i + 1]
                     entry_price = next_row["open"]
-                    qty = max(int(equity * MAX_POSITION_PCT / entry_price), 1)
+                    qty = position_size(equity, entry_price, confidence)
                     if side == "long" and equity >= entry_price * qty:
                         position = Trade(symbol=sym, side="long",
                                          entry_time=next_row.name, entry_price=entry_price, qty=qty)

@@ -1,8 +1,10 @@
 import src.config as config
 
 
-def position_size(equity: float, price: float) -> int:
-    qty = int(equity * config.MAX_POSITION_PCT / price)
+def position_size(equity: float, price: float, confidence: int = 1) -> int:
+    tiers = config.POSITION_SIZE_TIERS
+    pct   = tiers[min(confidence - 1, len(tiers) - 1)]
+    qty   = int(equity * pct / price)
     return max(qty, 1)
 
 
