@@ -33,6 +33,38 @@ def _calc_vwap(df: pd.DataFrame) -> pd.Series:
     return vwap
 
 
+def vp_is_clear(df: pd.DataFrame, direction: str, bins: int = 20, clear_ratio: float = 0.3) -> bool:
+    """볼륨 프로파일 기준 진입 방향이 뚫려있는지 확인.
+    direction: 'up'(롱) or 'down'(숏)
+    clear_ratio: 해당 방향 구간 평균 거래량이 최대 거래량의 이 비율 이하이면 '뚫려있다'고 판단
+    """
+    price_min = df["low"].min()
+    price_max = df["high"].max()
+    if price_max == price_min:
+        return True
+
+    bin_size = (price_max - price_min) / bins
+    current  = df["close"].iloc[-1]
+
+    vp = []
+    for b in range(bins):
+        lo  = price_min + b * bin_size
+        hi  = lo + bin_size
+        vol = df.loc[(df["close"] >= lo) & (df["close"] < hi), "volume"].sum()
+        vp.append(((lo + hi) / 2, vol))
+
+    max_vol = max(v for _, v in vp) or 1
+
+    if direction == "up":
+        target = [v for p, v in vp if p > current]
+    else:
+        target = [v for p, v in vp if p < current]
+
+    if not target:
+        return True
+    return (sum(target) / len(target)) < max_vol * clear_ratio
+
+
 def latest(df: pd.DataFrame) -> pd.Series:
     return df.iloc[-1]
 

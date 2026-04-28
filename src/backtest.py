@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from dataclasses import dataclass, field
 
-from src.indicators import add_indicators
+from src.indicators import add_indicators, vp_is_clear
 from src.config import POSITION_SIZE_TIERS, BACKTEST_UNIVERSE, GAP_THRESHOLD, VOL_RATIO_MIN, SCAN_TOP_N, EMA_TOUCH_PCT, PULLBACK_LOWER_PCT, VWAP_TOUCH_PCT, SIDEWAYS_WINDOW, SIDEWAYS_CROSSES, COOLDOWN_BARS
 from src.risk import check_exit_long, check_exit_short, position_size
 
@@ -133,7 +133,7 @@ def _is_sideways(df: pd.DataFrame, i: int) -> bool:
     return crosses >= SIDEWAYS_CROSSES
 
 
-def _check_entry(row: pd.Series, prev: pd.Series) -> tuple[str | None, int]:
+def _check_entry(row: pd.Series, prev: pd.Series, day_df: pd.DataFrame | None = None, use_vp: bool = False) -> tuple[str | None, int]:
     """진입 조건 확인. 반환: (side, confidence) — side는 'long'|'short'|None"""
     close = row["close"]
     open_ = row["open"]
@@ -150,6 +150,8 @@ def _check_entry(row: pd.Series, prev: pd.Series) -> tuple[str | None, int]:
                         and prev["low"] >= vwap * (1 - VWAP_TOUCH_PCT))
         bounce       = is_bullish and close > ema8
         if bounce and (ema_pullback or vwap_retest):
+            if use_vp and day_df is not None and not vp_is_clear(day_df, "up"):
+                return None, 0
             score = 1 + int(ema_pullback and vwap_retest) + int(close > vwap * 1.005)
             return "long", score
 
@@ -160,6 +162,8 @@ def _check_entry(row: pd.Series, prev: pd.Series) -> tuple[str | None, int]:
                         and prev["high"] <= vwap * (1 + VWAP_TOUCH_PCT))
         bounce       = is_bearish and close < ema8
         if bounce and (ema_pullback or vwap_retest):
+            if use_vp and day_df is not None and not vp_is_clear(day_df, "down"):
+                return None, 0
             score = 1 + int(ema_pullback and vwap_retest) + int(close < vwap * 0.995)
             return "short", score
 
@@ -233,6 +237,7 @@ def run_scanner_backtest(
     vol_ratio_min: float = VOL_RATIO_MIN,
     top_n: int = SCAN_TOP_N,
     cooldown_bars: int = COOLDOWN_BARS,
+    use_vp: bool = True,
 ) -> BacktestResult:
     """매일 스캐너로 종목 선별 후 해당 종목만 거래하는 현실적인 백테스트"""
     from alpaca.data.historical import StockHistoricalDataClient
@@ -373,7 +378,7 @@ def run_scanner_backtest(
                     continue
                 if _is_sideways(day_df, i):
                     continue
-                side, confidence = _check_entry(row, prev)
+                side, confidence = _check_entry(row, prev, day_df=day_df.iloc[:i+1], use_vp=use_vp)
                 if side and i + 1 < len(day_df):
                     next_row    = day_df.iloc[i + 1]
                     entry_price = next_row["open"]

@@ -1,7 +1,7 @@
 from enum import Enum
 import pandas as pd
 
-from src.indicators import add_indicators, latest
+from src.indicators import add_indicators, latest, vp_is_clear
 from src.config import EMA_TOUCH_PCT, PULLBACK_LOWER_PCT, VWAP_TOUCH_PCT, SIDEWAYS_WINDOW, SIDEWAYS_CROSSES
 
 
@@ -55,7 +55,7 @@ def get_signal(df: pd.DataFrame) -> tuple[Signal, str, int]:
                          and prev["low"] >= vwap * (1 - VWAP_TOUCH_PCT))
         bounce        = is_bullish and close > ema8
 
-        if bounce and (ema_pullback or vwap_retest):
+        if bounce and (ema_pullback or vwap_retest) and vp_is_clear(df, "up"):
             score = 1 + int(ema_pullback and vwap_retest) + int(close > vwap * 1.005)
             tags  = []
             if ema_pullback:  tags.append(f"EMA8눌림({ema8:.2f})")
@@ -71,7 +71,7 @@ def get_signal(df: pd.DataFrame) -> tuple[Signal, str, int]:
                          and prev["high"] <= vwap * (1 + VWAP_TOUCH_PCT))
         bounce        = is_bearish and close < ema8
 
-        if bounce and (ema_pullback or vwap_retest):
+        if bounce and (ema_pullback or vwap_retest) and vp_is_clear(df, "down"):
             score = 1 + int(ema_pullback and vwap_retest) + int(close < vwap * 0.995)
             tags  = []
             if ema_pullback:  tags.append(f"EMA8반락({ema8:.2f})")
