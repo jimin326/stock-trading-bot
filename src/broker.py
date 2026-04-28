@@ -3,9 +3,9 @@ from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, GetOr
 from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 from alpaca.trading.models import Order, Position
 
-from src.config import ALPACA_API_KEY, ALPACA_SECRET_KEY
+from src.config import ALPACA_API_KEY, ALPACA_SECRET_KEY, PAPER_TRADING
 
-_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
+_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=PAPER_TRADING)
 
 
 def get_account() -> dict:

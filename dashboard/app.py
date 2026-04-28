@@ -298,7 +298,7 @@ bt_days = st.slider("백테스트 기간 (일)", 30, 90, 60, key="bt_days")
 if st.button("백테스트 실행", type="secondary"):
     with st.spinner("데이터 수집 및 시뮬레이션 중... (약 30~60초)"):
         try:
-            result = run_scanner_backtest(days=bt_days)
+            result = run_scanner_backtest(days=bt_days, side_filter="long_only", strict_exit=True, cooldown_bars=5)
             st.session_state.bt_result = result
         except Exception as e:
             st.error(f"백테스트 오류: {e}")
@@ -361,3 +361,54 @@ if "bt_result" in st.session_state:
             hide_index=True,
             height=min(400, 35 + len(trade_data) * 35),
         )
+
+st.divider()
+
+# ── 실제 거래 내역 ─────────────────────────────────────────
+st.markdown('<div class="section-title">실제 거래 내역</div>', unsafe_allow_html=True)
+
+log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "trades.csv")
+
+col_btn1, col_btn2 = st.columns([1, 5])
+if col_btn1.button("알파카에서 불러오기", type="primary"):
+    with st.spinner("거래 내역 가져오는 중..."):
+        try:
+            from src.fetch_history import fetch_and_save
+            fetch_and_save()
+            st.success("불러오기 완료!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"오류: {e}")
+
+if os.path.exists(log_path):
+    df_log = pd.read_csv(log_path, encoding="utf-8-sig")
+    if not df_log.empty:
+        pnl_series   = pd.to_numeric(df_log["수익금($)"], errors="coerce").fillna(0)
+        total_profit = pnl_series.sum()
+        win_count    = (pnl_series > 0).sum()
+        win_rate     = win_count / len(df_log) * 100
+
+        s1, s2, s3 = st.columns(3)
+        s1.metric("누적 수익금", f"${total_profit:+.2f}")
+        s2.metric("총 거래",    f"{len(df_log)}건")
+        s3.metric("승률",       f"{win_rate:.1f}%")
+
+        def color_pnl_real(val):
+            try:
+                v = float(val)
+                color = "#00D278" if v >= 0 else "#FF4747"
+                return f"color: {color}; font-weight: 600"
+            except:
+                return ""
+
+        styled_log = df_log.style.map(color_pnl_real, subset=["수익금($)", "수익률(%)"])
+        st.dataframe(
+            styled_log,
+            use_container_width=True,
+            hide_index=True,
+            height=min(500, 35 + len(df_log) * 35),
+        )
+    else:
+        st.markdown('<div class="toss-card" style="color:#8E8E93;text-align:center;padding:24px;">거래 내역 없음</div>', unsafe_allow_html=True)
+else:
+    st.markdown('<div class="toss-card" style="color:#8E8E93;text-align:center;padding:24px;">위 버튼으로 알파카에서 불러오세요</div>', unsafe_allow_html=True)

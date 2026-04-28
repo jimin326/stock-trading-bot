@@ -238,6 +238,8 @@ def run_scanner_backtest(
     top_n: int = SCAN_TOP_N,
     cooldown_bars: int = COOLDOWN_BARS,
     use_vp: bool = True,
+    side_filter: str = "both",   # "long_only" | "short_only" | "both"
+    strict_exit: bool = False,   # True=종가 EMA 이탈 즉시 청산(영상방식)
 ) -> BacktestResult:
     """매일 스캐너로 종목 선별 후 해당 종목만 거래하는 현실적인 백테스트"""
     from alpaca.data.historical import StockHistoricalDataClient
@@ -359,9 +361,9 @@ def run_scanner_backtest(
 
                 if position:
                     if position.side == "long":
-                        do_exit, exit_price, reason = check_exit_long(close, open_, low, ema8, position.entry_price)
+                        do_exit, exit_price, reason = check_exit_long(close, open_, low, ema8, position.entry_price, strict=strict_exit)
                     else:
-                        do_exit, exit_price, reason = check_exit_short(close, open_, high, ema8, position.entry_price)
+                        do_exit, exit_price, reason = check_exit_short(close, open_, high, ema8, position.entry_price, strict=strict_exit)
 
                     if do_exit:
                         position.exit_time  = row.name
@@ -380,6 +382,10 @@ def run_scanner_backtest(
                     continue
                 side, confidence = _check_entry(row, prev, day_df=day_df.iloc[:i+1], use_vp=use_vp)
                 if side and i + 1 < len(day_df):
+                    if side_filter == "long_only" and side != "long":
+                        continue
+                    if side_filter == "short_only" and side != "short":
+                        continue
                     next_row    = day_df.iloc[i + 1]
                     entry_price = next_row["open"]
                     qty = position_size(equity, entry_price, confidence)
