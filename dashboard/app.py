@@ -103,12 +103,12 @@ with col_left:
     try:
         df = get_bars(symbol, days=load_days, timeframe=tf_option)
         df = add_indicators(df)
-        signal, reason = get_signal(df.iloc[:-1].copy())
+        signal, reason, confidence = get_signal(df.iloc[:-1].copy())
 
         if signal == Signal.BUY:
-            st.success(f"매수 신호  |  {reason}")
+            st.success(f"매수 신호 (확신도 {confidence})  |  {reason}")
         elif signal == Signal.SELL:
-            st.error(f"매도 신호  |  {reason}")
+            st.error(f"매도 신호 (확신도 {confidence})  |  {reason}")
         else:
             st.info(f"홀드  |  {reason}")
 
@@ -139,7 +139,7 @@ with col_left:
         ), row=1, col=1)
 
         fig.add_trace(go.Scatter(
-            x=df.index, y=df["ema9"], name="EMA9",
+            x=df.index, y=df["ema9"], name="EMA8",
             line=dict(color="#FF6B6B", width=1.5),
         ), row=1, col=1)
 
@@ -232,13 +232,14 @@ with col_right:
         rows = []
         for sym in TRADE_SYMBOLS:
             df_sym = get_bars(sym, days=5)
-            sig, _ = get_signal(df_sym)
+            sig, reason_sym, conf_sym = get_signal(df_sym)
             badge  = "badge-buy" if sig == Signal.BUY else "badge-sell" if sig == Signal.SELL else "badge-hold"
             label  = "매수" if sig == Signal.BUY else "매도" if sig == Signal.SELL else "홀드"
+            conf_label = f" {conf_sym}" if sig != Signal.HOLD else ""
             rows.append(f"""
             <div class="sym-row">
               <div class="sym-name">{sym}</div>
-              <span class="badge {badge}">{label}</span>
+              <span class="badge {badge}">{label}{conf_label}</span>
             </div>""")
         st.markdown(f'<div class="toss-card">{"".join(rows)}</div>', unsafe_allow_html=True)
     except Exception as e:
@@ -342,6 +343,7 @@ if "bt_result" in st.session_state:
                 "진입가":  f"${t.entry_price:.2f}",
                 "청산가":  f"${t.exit_price:.2f}" if t.exit_price else "-",
                 "수익률":  f"{t.pnl_pct:+.2f}%",
+                "수익금액": f"${t.pnl:+.2f}",
                 "사유":    t.reason,
             })
 
@@ -352,7 +354,7 @@ if "bt_result" in st.session_state:
             color = "#00D278" if val.startswith("+") else "#FF4747"
             return f"color: {color}; font-weight: 600"
 
-        styled = df_trades.style.map(color_pnl, subset=["수익률"])
+        styled = df_trades.style.map(color_pnl, subset=["수익률", "수익금액"])
         st.dataframe(
             styled,
             use_container_width=True,
