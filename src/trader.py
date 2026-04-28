@@ -4,7 +4,7 @@ from datetime import datetime, date
 from src.broker import get_account, get_position, buy_market, sell_market, cancel_all_orders
 from src.data_feed import get_bars
 from src.strategy import get_signal, Signal
-from src.risk import position_size, should_stop_loss, should_take_profit
+from src.risk import position_size, should_exit_long, should_exit_short
 from src.scanner import scan_market
 import src.config as config
 
@@ -61,13 +61,13 @@ def run(interval_sec: int = 300):
                     entry = float(position.avg_entry_price)
                     qty   = int(position.qty)
 
-                    if should_stop_loss(entry, current_price):
-                        print(f"  [{symbol}] 손절 | 진입 ${entry:.2f} → 현재 ${current_price:.2f}")
-                        sell_market(symbol, qty)
-                        continue
+                    df_ind = df.copy()
+                    from src.indicators import add_indicators
+                    df_ind = add_indicators(df_ind)
+                    ema9 = df_ind["ema9"].iloc[-1]
 
-                    if should_take_profit(entry, current_price):
-                        print(f"  [{symbol}] 익절 | 진입 ${entry:.2f} → 현재 ${current_price:.2f}")
+                    if should_exit_long(current_price, ema9):
+                        print(f"  [{symbol}] EMA9 이탈 청산 | 진입 ${entry:.2f} → 현재 ${current_price:.2f}")
                         sell_market(symbol, qty)
                         continue
 
