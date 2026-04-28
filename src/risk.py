@@ -1,11 +1,14 @@
 import src.config as config
 
 
-def position_size(equity: float, price: float, confidence: int = 1) -> int:
+def position_size(equity: float, price: float, confidence: int = 1) -> float:
     tiers = config.POSITION_SIZE_TIERS
     pct   = tiers[min(confidence - 1, len(tiers) - 1)]
-    qty   = int(equity * pct / price)
-    return max(qty, 1)
+    if config.FRACTIONAL_SHARES:
+        return round(equity * pct / price, 4)   # 소수점 4자리
+    else:
+        qty = int(equity * pct / price)
+        return max(qty, 1)                       # 정수, 최소 1주
 
 
 def check_exit_long(

@@ -116,7 +116,7 @@ def run(interval_sec: int = 300):
                 # ── 포지션 청산 체크 ──────────────────────────────
                 if position:
                     entry = float(position.avg_entry_price)
-                    qty   = abs(int(float(position.qty)))
+                    qty   = abs(float(position.qty))  # 소수점 지원
                     side  = "long" if float(position.qty) > 0 else "short"
 
                     if side == "long":

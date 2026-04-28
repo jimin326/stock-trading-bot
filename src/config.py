@@ -17,7 +17,8 @@ EMA_TOUCH_PCT      = 0.005  # EMA 눌림목 인정 범위 (0.5%)
 PULLBACK_LOWER_PCT = 0.02   # 눌림목 하한선: EMA 기준 -2% 이내까지만 인정
 VWAP_TOUCH_PCT     = 0.003  # VWAP 리테스트 인정 범위 (0.3%)
 
-HARD_STOP_PCT    = 0.02   # 하드 손절 -2%
+HARD_STOP_PCT      = 0.02   # 하드 손절 -2%
+FRACTIONAL_SHARES  = True   # True=소수점 거래, False=정수 거래
 COOLDOWN_BARS    = 5      # 청산 후 재진입 금지 캔들 수 (5캔들 = 25분)
 STRICT_EXIT      = True   # True=종가 EMA 이탈 즉시 청산, False=몸통 전체 이탈
 
