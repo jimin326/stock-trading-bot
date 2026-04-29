@@ -79,9 +79,9 @@ def scan_market(
                 continue
 
             gap_pct   = (daily.open - prev.close) / prev.close * 100
-            vol_ratio = daily.volume / avg_vol
+            vol_ratio = daily.volume / avg_vol  # 오늘 거래량 / 20일 평균
 
-            if abs(gap_pct) < gap_threshold or vol_ratio < vol_ratio_min:
+            if vol_ratio < vol_ratio_min:
                 continue
 
             candidates.append(ScanResult(
@@ -94,7 +94,7 @@ def scan_market(
         except Exception:
             continue
 
-    candidates.sort(key=lambda x: abs(x.gap_pct) * x.vol_ratio, reverse=True)
+    candidates.sort(key=lambda x: x.vol_ratio, reverse=True)
     return candidates[:top_n]
 
 

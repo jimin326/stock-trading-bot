@@ -9,66 +9,60 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     df["ema9"] = ta.trend.EMAIndicator(df["close"], window=config.EMA_PERIOD).ema_indicator()
     df["vwap"] = _calc_vwap(df)
-    df["vp_empty_above"], df["vp_empty_below"] = _calc_volume_profile(df)
 
     return df
 
 
 def _calc_vwap(df: pd.DataFrame) -> pd.Series:
     typical = (df["high"] + df["low"] + df["close"]) / 3
-    tp_vol = typical * df["volume"]
+    tp_vol  = typical * df["volume"]
 
-    dates = df.index.normalize() if hasattr(df.index, "normalize") else pd.Series(df.index).dt.normalize()
+    # ET 날짜 기준으로 하루씩 누적 — TradingView와 동일한 세션 리셋
+    if hasattr(df.index, "date"):
+        dates = pd.Series([t.date() for t in df.index], index=df.index)
+    else:
+        dates = pd.to_datetime(df.index).date
 
     vwap = pd.Series(index=df.index, dtype=float)
 
-    for date, idx in df.groupby(df.index.normalize()).groups.items():
+    for date, idx in df.groupby(dates).groups.items():
         cum_tp_vol = tp_vol.loc[idx].cumsum()
-        cum_vol = df["volume"].loc[idx].cumsum()
+        cum_vol    = df["volume"].loc[idx].cumsum()
         vwap.loc[idx] = cum_tp_vol / cum_vol
 
     return vwap
 
 
-def _calc_volume_profile(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
-    import numpy as np
+def vp_is_clear(df: pd.DataFrame, direction: str, bins: int = 20, clear_ratio: float = 0.3) -> bool:
+    """볼륨 프로파일 기준 진입 방향이 뚫려있는지 확인.
+    direction: 'up'(롱) or 'down'(숏)
+    clear_ratio: 해당 방향 구간 평균 거래량이 최대 거래량의 이 비율 이하이면 '뚫려있다'고 판단
+    """
+    price_min = df["low"].min()
+    price_max = df["high"].max()
+    if price_max == price_min:
+        return True
 
-    n = len(df)
-    empty_above = pd.Series(False, index=df.index)
-    empty_below = pd.Series(False, index=df.index)
+    bin_size = (price_max - price_min) / bins
+    current  = df["close"].iloc[-1]
 
-    closes  = df["close"].to_numpy()
-    volumes = df["volume"].to_numpy()
-    lows    = df["low"].to_numpy()
-    highs   = df["high"].to_numpy()
-    W = config.VOLUME_PROFILE_WINDOW
-    B = config.VOLUME_PROFILE_BINS
-    check = 5
+    vp = []
+    for b in range(bins):
+        lo  = price_min + b * bin_size
+        hi  = lo + bin_size
+        vol = df.loc[(df["close"] >= lo) & (df["close"] < hi), "volume"].sum()
+        vp.append(((lo + hi) / 2, vol))
 
-    for i in range(W, n):
-        w_close = closes[i - W: i + 1]
-        w_vol   = volumes[i - W: i + 1]
-        price_min = lows[i - W: i + 1].min()
-        price_max = highs[i - W: i + 1].max()
-        price_range = price_max - price_min
+    max_vol = max(v for _, v in vp) or 1
 
-        if price_range == 0:
-            continue
+    if direction == "up":
+        target = [v for p, v in vp if p > current]
+    else:
+        target = [v for p, v in vp if p < current]
 
-        # numpy로 한번에 bin 계산
-        bins = np.clip(((w_close - price_min) / price_range * B).astype(int), 0, B - 1)
-        vol_by_bin = np.bincount(bins, weights=w_vol, minlength=B)
-
-        threshold   = vol_by_bin.mean() * config.VOLUME_EMPTY_RATIO
-        current_bin = int(np.clip((closes[i] - price_min) / price_range * B, 0, B - 1))
-
-        above = vol_by_bin[current_bin + 1: current_bin + 1 + check]
-        below = vol_by_bin[max(0, current_bin - check): current_bin]
-
-        empty_above.iloc[i] = bool(np.all(above < threshold)) if len(above) > 0 else True
-        empty_below.iloc[i] = bool(np.all(below < threshold)) if len(below) > 0 else True
-
-    return empty_above, empty_below
+    if not target:
+        return True
+    return (sum(target) / len(target)) < max_vol * clear_ratio
 
 
 def latest(df: pd.DataFrame) -> pd.Series:
@@ -83,8 +77,6 @@ if __name__ == "__main__":
     row = latest(df)
 
     print(f"=== AAPL 최신 지표 ===")
-    print(f"EMA9      : {row['ema9']:.2f}")
-    print(f"VWAP      : {row['vwap']:.2f}")
-    print(f"현재가    : {row['close']:.2f}")
-    print(f"위쪽 매물 비어있음: {row['vp_empty_above']}")
-    print(f"아래쪽 매물 비어있음: {row['vp_empty_below']}")
+    print(f"EMA9   : {row['ema9']:.2f}")
+    print(f"VWAP   : {row['vwap']:.2f}")
+    print(f"현재가 : {row['close']:.2f}")

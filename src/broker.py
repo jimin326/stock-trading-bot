@@ -3,9 +3,9 @@ from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, GetOr
 from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 from alpaca.trading.models import Order, Position
 
-from src.config import ALPACA_API_KEY, ALPACA_SECRET_KEY
+from src.config import ALPACA_API_KEY, ALPACA_SECRET_KEY, PAPER_TRADING, FRACTIONAL_SHARES
 
-_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
+_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=PAPER_TRADING)
 
 
 def get_account() -> dict:
@@ -29,7 +29,7 @@ def get_position(symbol: str) -> Position | None:
         return None
 
 
-def buy_market(symbol: str, qty: int) -> Order:
+def buy_market(symbol: str, qty: float) -> Order:
     req = MarketOrderRequest(
         symbol=symbol,
         qty=qty,
@@ -37,11 +37,12 @@ def buy_market(symbol: str, qty: int) -> Order:
         time_in_force=TimeInForce.DAY,
     )
     order = _client.submit_order(req)
-    print(f"[매수] {symbol} {qty}주 | 시장가")
+    label = f"{qty}주" if not FRACTIONAL_SHARES else f"{qty:.4f}주"
+    print(f"[매수] {symbol} {label} | 시장가")
     return order
 
 
-def sell_market(symbol: str, qty: int) -> Order:
+def sell_market(symbol: str, qty: float) -> Order:
     req = MarketOrderRequest(
         symbol=symbol,
         qty=qty,
@@ -49,7 +50,8 @@ def sell_market(symbol: str, qty: int) -> Order:
         time_in_force=TimeInForce.DAY,
     )
     order = _client.submit_order(req)
-    print(f"[매도] {symbol} {qty}주 | 시장가")
+    label = f"{qty}주" if not FRACTIONAL_SHARES else f"{qty:.4f}주"
+    print(f"[매도] {symbol} {label} | 시장가")
     return order
 
 
@@ -77,6 +79,18 @@ def sell_limit(symbol: str, qty: int, price: float) -> Order:
     order = _client.submit_order(req)
     print(f"[매도] {symbol} {qty}주 | 지정가 ${price:.2f}")
     return order
+
+
+def is_shortable(symbol: str) -> bool:
+    try:
+        asset = _client.get_asset(symbol)
+        return bool(asset.shortable) and bool(asset.easy_to_borrow)
+    except Exception:
+        return False
+
+
+def get_shortable_set(symbols: list[str]) -> set[str]:
+    return {s for s in symbols if is_shortable(s)}
 
 
 def cancel_all_orders():
