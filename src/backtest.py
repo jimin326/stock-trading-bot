@@ -156,7 +156,7 @@ def _is_sideways(df: pd.DataFrame, i: int) -> bool:
     return crosses >= SIDEWAYS_CROSSES
 
 
-def _check_entry(row: pd.Series, prev: pd.Series, day_df: pd.DataFrame | None = None, use_vp: bool = False) -> tuple[str | None, int]:
+def _check_entry(row: pd.Series, prev: pd.Series, day_df: pd.DataFrame | None = None, use_vp: bool = False, use_n2: bool = False) -> tuple[str | None, int]:
     """진입 조건 확인. 반환: (side, confidence) — side는 'long'|'short'|None"""
     close = row["close"]
     open_ = row["open"]
@@ -166,12 +166,24 @@ def _check_entry(row: pd.Series, prev: pd.Series, day_df: pd.DataFrame | None = 
     is_bullish = close > open_
     is_bearish = close < open_
 
+    # n-2 캔들 (use_n2=True일 때만 사용)
+    prev2 = day_df.iloc[-3] if (use_n2 and day_df is not None and len(day_df) >= 3) else None
+
     if close > vwap:
         ema_pullback = (prev["low"] <= ema8 * (1 + EMA_TOUCH_PCT)
                         and prev["low"] >= ema8 * (1 - PULLBACK_LOWER_PCT))
         vwap_retest  = (prev["low"] <= vwap * (1 + VWAP_TOUCH_PCT)
                         and prev["low"] >= vwap * (1 - VWAP_TOUCH_PCT))
-        bounce       = is_bullish and close > ema8
+
+        # n-2 필터: 기존 n-1 눌림목 신호일 때, n-2가 추세 확인(종가>EMA) or 몸통이 EMA에 걸침
+        if use_n2 and prev2 is not None and ema_pullback:
+            ema8_n2       = prev2["ema9"]
+            n2_above      = prev2["close"] > ema8_n2
+            n2_straddle   = min(prev2["open"], prev2["close"]) <= ema8_n2 <= max(prev2["open"], prev2["close"])
+            if not (n2_above or n2_straddle):
+                ema_pullback = False  # n-2 추세 확인 실패 → 신호 취소
+
+        bounce = is_bullish and close > ema8
         if bounce and (ema_pullback or vwap_retest):
             if use_vp and day_df is not None and not vp_is_clear(day_df, "up"):
                 return None, 0
@@ -183,7 +195,16 @@ def _check_entry(row: pd.Series, prev: pd.Series, day_df: pd.DataFrame | None = 
                         and prev["high"] <= ema8 * (1 + PULLBACK_LOWER_PCT))
         vwap_retest  = (prev["high"] >= vwap * (1 - VWAP_TOUCH_PCT)
                         and prev["high"] <= vwap * (1 + VWAP_TOUCH_PCT))
-        bounce       = is_bearish and close < ema8
+
+        # n-2 필터: 기존 n-1 눌림목 신호일 때, n-2가 추세 확인(종가<EMA) or 몸통이 EMA에 걸침
+        if use_n2 and prev2 is not None and ema_pullback:
+            ema8_n2       = prev2["ema9"]
+            n2_below      = prev2["close"] < ema8_n2
+            n2_straddle   = min(prev2["open"], prev2["close"]) <= ema8_n2 <= max(prev2["open"], prev2["close"])
+            if not (n2_below or n2_straddle):
+                ema_pullback = False
+
+        bounce = is_bearish and close < ema8
         if bounce and (ema_pullback or vwap_retest):
             if use_vp and day_df is not None and not vp_is_clear(day_df, "down"):
                 return None, 0
@@ -263,6 +284,9 @@ def run_scanner_backtest(
     use_vp: bool = True,
     side_filter: str = "both",   # "long_only" | "short_only" | "both"
     strict_exit: bool = False,   # True=종가 EMA 이탈 즉시 청산(영상방식)
+    start_date: str = None,      # "YYYY-MM-DD" 고정 시작일
+    end_date: str = None,        # "YYYY-MM-DD" 고정 종료일
+    use_n2: bool = False,        # True=n-2 캔들 눌림목 조건 허용
 ) -> BacktestResult:
     """매일 스캐너로 종목 선별 후 해당 종목만 거래하는 현실적인 백테스트"""
     from alpaca.data.historical import StockHistoricalDataClient
@@ -273,11 +297,20 @@ def run_scanner_backtest(
     import src.config as _cfg
 
     client = StockHistoricalDataClient(_cfg.ALPACA_API_KEY, _cfg.ALPACA_SECRET_KEY)
-    end   = datetime.now()
-    start_intra = end - timedelta(days=days)
-    start_daily = end - timedelta(days=days + 35)
 
-    print(f"[1/3] 일봉 데이터 수집 중 ({len(BACKTEST_UNIVERSE)}종목, {days+35}일)...")
+    if end_date:
+        end = datetime.strptime(end_date, "%Y-%m-%d")
+    else:
+        end = datetime.now()
+
+    if start_date:
+        start_intra = datetime.strptime(start_date, "%Y-%m-%d")
+    else:
+        start_intra = end - timedelta(days=days)
+
+    start_daily = start_intra - timedelta(days=35)
+
+    print(f"[1/3] 일봉 데이터 수집 중 ({len(BACKTEST_UNIVERSE)}종목, {start_intra.date()} ~ {end.date()})...")
     daily_bars = client.get_stock_bars(StockBarsRequest(
         symbol_or_symbols=BACKTEST_UNIVERSE,
         timeframe=TimeFrame.Day,
@@ -403,7 +436,7 @@ def run_scanner_backtest(
                     continue
                 if _is_sideways(day_df, i):
                     continue
-                side, confidence = _check_entry(row, prev, day_df=day_df.iloc[:i+1], use_vp=use_vp)
+                side, confidence = _check_entry(row, prev, day_df=day_df.iloc[:i+1], use_vp=use_vp, use_n2=use_n2)
                 if side and i + 1 < len(day_df):
                     if side_filter == "long_only" and side != "long":
                         continue

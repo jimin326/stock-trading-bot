@@ -33,11 +33,17 @@ GAP_THRESHOLD     = 1.0   # 갭 기준 (%)
 VOL_RATIO_MIN     = 1.5   # 전일 대비 거래량 배수 하한
 SCAN_TOP_N        = 2     # 스캐너 추가 종목 수
 
-# 백테스트용 유니버스 (5분봉 데이터 부하 고려해 25종목으로 제한)
+# 백테스트용 유니버스 (실거래 SCAN_UNIVERSE와 동일)
 BACKTEST_UNIVERSE = [
-    "AAPL","MSFT","NVDA","TSLA","AMZN","META","GOOGL","AMD",
-    "QCOM","INTC","COIN","PLTR","ARM","SMCI","MSTR",
-    "UBER","SHOP","SNAP","PYPL","SOFI","RIVN","NIO","HOOD","SQ","RBLX",
+    "AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AVGO",
+    "JPM","LLY","V","UNH","XOM","MA","HD","PG","COST","ORCL",
+    "ABBV","WMT","BAC","CVX","MRK","KO","NFLX","CRM","AMD",
+    "PEP","TMO","ADBE","ACN","DHR","MCD","ABT","CSCO","TXN",
+    "QCOM","HON","LOW","ISRG","BKNG","GS","MS","AMAT","SYK",
+    "GILD","MDT","DE","NOW","ADI","SBUX","VRTX","MU","LRCX",
+    "PANW","KLAC","MELI","REGN","CI","ZTS","CME","UBER","PYPL",
+    "COIN","PLTR","SOFI","RIVN","NIO","SHOP","SPOT","SNAP","SQ",
+    "RBLX","U","HOOD","F","GM","INTC","ARM","SMCI","MSTR",
 ]
 
 # 실시간 스캔 유니버스 — S&P500 대형주 + 고변동성 인기 종목
