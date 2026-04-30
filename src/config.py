@@ -8,7 +8,7 @@ ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
 PAPER_TRADING   = os.getenv("PAPER_TRADING", "true").lower() != "false"  # .env에서 PAPER_TRADING=false 설정 시 실전
 
-TRADE_SYMBOLS = ["NVDA", "TSLA", "AAPL", "AMD", "META", "MSFT", "AMZN", "GOOGL", "COIN", "PLTR"]  # 고정 감시 종목
+TRADE_SYMBOLS = ["NVDA", "TSLA", "AAPL", "AMD", "META", "MSFT", "AMZN", "GOOGL", "NFLX", "PLTR"]  # 고정 감시 종목
 
 TIMEFRAME  = "5Min"
 EMA_PERIOD = 8
@@ -23,7 +23,7 @@ COOLDOWN_BARS    = 5      # 청산 후 재진입 금지 캔들 수 (5캔들 = 25
 STRICT_EXIT      = True   # True=종가 EMA 이탈 즉시 청산, False=몸통 전체 이탈
 
 # 확신도(1~3)별 포지션 비중
-POSITION_SIZE_TIERS = [0.05, 0.10, 0.20]
+POSITION_SIZE_TIERS = [0.05, 0.10, 0.20, 0.30]
 
 SIDEWAYS_WINDOW    = 6    # 횡보 판단에 사용할 최근 캔들 수 (5분봉 기준 30분)
 SIDEWAYS_CROSSES   = 3    # 해당 구간에서 VWAP 교차 횟수 ≥ 이 값이면 횡보로 판단
@@ -36,7 +36,7 @@ SCAN_TOP_N        = 2     # 스캐너 추가 종목 수
 # 백테스트용 유니버스 (5분봉 데이터 부하 고려해 25종목으로 제한)
 BACKTEST_UNIVERSE = [
     "AAPL","MSFT","NVDA","TSLA","AMZN","META","GOOGL","AMD",
-    "QCOM","INTC","COIN","PLTR","ARM","SMCI","MSTR",
+    "QCOM","INTC","NFLX","PLTR","ARM","SMCI","MSTR",
     "UBER","SHOP","SNAP","PYPL","SOFI","RIVN","NIO","HOOD","SQ","RBLX",
 ]
 
@@ -49,6 +49,6 @@ SCAN_UNIVERSE = [
     "QCOM","HON","LOW","ISRG","BKNG","GS","MS","AMAT","SYK",
     "GILD","MDT","DE","NOW","ADI","SBUX","VRTX","MU","LRCX",
     "PANW","KLAC","MELI","REGN","CI","ZTS","CME","UBER","PYPL",
-    "COIN","PLTR","SOFI","RIVN","NIO","SHOP","SPOT","SNAP","SQ",
+    "PLTR","SOFI","RIVN","NIO","SHOP","SPOT","SNAP","SQ",
     "RBLX","U","HOOD","F","GM","INTC","ARM","SMCI","MSTR",
 ]

@@ -1,7 +1,7 @@
 """
-6가지 조합 백테스트 비교
-  손절: 1% / 1.5% / 2%
-  포지션비중: [5,10,20]% vs [7,10,13]%
+진입 로직 v1 vs v2 백테스트 비교
+  v1 (구버전): N-1 눌림목 + N 양봉 → N+1 진입
+  v2 (신버전): N-1 눌림목 + N 양봉확인 → N+1 신호 → N+2 진입
 
 실행: python backtest_compare.py [--days 60]
 """
@@ -10,22 +10,11 @@ import argparse
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-from dataclasses import dataclass
 
 import src.config as config
 from src.indicators import add_indicators
-from src.backtest import Trade, BacktestResult, _is_sideways, _check_entry
+from src.backtest import Trade, BacktestResult, _is_sideways, _check_entry, _check_entry_v2
 from src.risk import check_exit_long, check_exit_short, position_size
-
-
-COMBOS = [
-    {"stop": 0.010, "tiers": [0.05, 0.10, 0.20], "label": "손절1.0% / 비중 5-10-20%"},
-    {"stop": 0.015, "tiers": [0.05, 0.10, 0.20], "label": "손절1.5% / 비중 5-10-20%"},
-    {"stop": 0.020, "tiers": [0.05, 0.10, 0.20], "label": "손절2.0% / 비중 5-10-20%"},
-    {"stop": 0.010, "tiers": [0.07, 0.10, 0.13], "label": "손절1.0% / 비중 7-10-13%"},
-    {"stop": 0.015, "tiers": [0.07, 0.10, 0.13], "label": "손절1.5% / 비중 7-10-13%"},
-    {"stop": 0.020, "tiers": [0.07, 0.10, 0.13], "label": "손절2.0% / 비중 7-10-13% ← 현재"},
-]
 
 
 def load_data(days: int):
@@ -86,11 +75,8 @@ def load_data(days: int):
 
 
 def simulate(daily_dfs, intraday_dfs, shortable, all_dates,
-             hard_stop_pct, tiers, initial_equity=10_000.0):
-    config.HARD_STOP_PCT       = hard_stop_pct
-    config.POSITION_SIZE_TIERS = tiers
-
-    result = BacktestResult(symbol="CMP", initial_equity=initial_equity)
+             use_v2: bool = False, initial_equity: float = 10_000.0):
+    result = BacktestResult(symbol="V2" if use_v2 else "V1", initial_equity=initial_equity)
     equity = initial_equity
 
     for d in all_dates:
@@ -130,7 +116,9 @@ def simulate(daily_dfs, intraday_dfs, shortable, all_dates,
 
             position = None
             cooldown_until = -1
-            for i in range(1, len(day_df)):
+            start_i = 2 if use_v2 else 1
+
+            for i in range(start_i, len(day_df)):
                 row   = day_df.iloc[i]
                 prev  = day_df.iloc[i - 1]
                 close, open_ = row["close"], row["open"]
@@ -159,7 +147,15 @@ def simulate(daily_dfs, intraday_dfs, shortable, all_dates,
                     continue
                 if _is_sideways(day_df, i):
                     continue
-                side, conf = _check_entry(row, prev, day_df=day_df.iloc[:i+1], use_vp=True)
+
+                if use_v2:
+                    prev2 = day_df.iloc[i - 2]
+                    side, conf = _check_entry_v2(row, prev, prev2,
+                                                 day_df=day_df.iloc[:i+1], use_vp=True)
+                else:
+                    side, conf = _check_entry(row, prev,
+                                              day_df=day_df.iloc[:i+1], use_vp=True)
+
                 if side and i + 1 < len(day_df):
                     next_row    = day_df.iloc[i + 1]
                     entry_price = next_row["open"]
@@ -187,52 +183,45 @@ def simulate(daily_dfs, intraday_dfs, shortable, all_dates,
 
 
 def print_table(rows: list[dict]):
-    W = 100
+    W = 90
     print("\n" + "=" * W)
-    print(f"  {'':42} │ {'거래':>4} {'승':>4} {'패':>4} {'승률':>6} {'수익률':>7} {'MDD':>7} {'샤프':>6}")
-    print("  " + "─" * 42 + "─┼─" + "─" * 43)
+    print(f"  {'버전':30} │ {'거래':>4} {'승':>4} {'패':>4} {'승률':>6} {'수익률':>8} {'MDD':>7} {'샤프':>6}")
+    print("  " + "─" * 30 + "─┼─" + "─" * 44)
     for r in rows:
-        marker = " ★" if r["label"].endswith("현재") else "  " if "현재" not in r["label"] else "  "
-        # marker already in label as ← 현재
-        label = r["label"]
         n, w, l = r["trades"], r["wins"], r["losses"]
-        wr  = r["win_rate"]
-        tr  = r["total_return"]
-        mdd = r["mdd"]
-        sh  = r["sharpe"]
-        tr_color  = "+" if tr >= 0 else ""
-        print(f"  {label:42} │ {n:4d} {w:4d} {l:4d} {wr:5.1f}% {tr:+6.2f}% {mdd:+6.2f}% {sh:6.2f}")
-
+        print(
+            f"  {r['label']:30} │ {n:4d} {w:4d} {l:4d} "
+            f"{r['win_rate']:5.1f}% {r['total_return']:+7.2f}% "
+            f"{r['mdd']:+6.2f}% {r['sharpe']:6.2f}"
+        )
     print("=" * W)
 
-    # 확신도별 상세
-    print(f"\n  {'':42} │ 확신도1          확신도2          확신도3")
-    print(f"  {'':42} │ {'거래 승 패 승률':>18} {'거래 승 패 승률':>18} {'거래 승 패 승률':>18}")
-    print("  " + "─" * 42 + "─┼─" + "─" * 57)
+    print(f"\n  {'버전':30} │ {'확신도1':^20} {'확신도2':^20} {'확신도3':^20}")
+    print(f"  {'':30} │ {'거래 승 패 승률':^20} {'거래 승 패 승률':^20} {'거래 승 패 승률':^20}")
+    print("  " + "─" * 30 + "─┼─" + "─" * 63)
     for r in rows:
-        label = r["label"]
         parts = []
-        for conf in [1, 2, 3]:
+        for conf in [1, 2, 3, 4]:
             t = r["conf"][conf]
             if t["n"] == 0:
-                parts.append(f"{'없음':>18}")
+                parts.append(f"{'없음':^20}")
             else:
                 parts.append(f"{t['n']:3d} {t['w']:3d} {t['l']:3d} {t['wr']:5.1f}%")
-        print(f"  {label:42} │ {parts[0]:18} {parts[1]:18} {parts[2]:18}")
+        print(f"  {r['label']:30} │ {parts[0]:20} {parts[1]:20} {parts[2]:20}")
     print("=" * W)
 
 
 def main(days: int = 60):
-    orig_stop  = config.HARD_STOP_PCT
-    orig_tiers = config.POSITION_SIZE_TIERS[:]
-
     daily_dfs, intraday_dfs, shortable, all_dates = load_data(days)
 
     rows = []
-    for i, combo in enumerate(COMBOS, 1):
-        print(f"[{i}/6] {combo['label']} 시뮬레이션 중...")
-        result = simulate(daily_dfs, intraday_dfs, shortable, all_dates,
-                          hard_stop_pct=combo["stop"], tiers=combo["tiers"])
+    for label, use_v2 in [
+        ("v1 (구버전: N-1눌림+N양봉→N+1진입)", False),
+        ("v2 (신버전: N-1눌림+N양봉확인→N+2진입)", True),
+    ]:
+        tag = "v2" if use_v2 else "v1"
+        print(f"[{tag}] {label} 시뮬레이션 중...")
+        result = simulate(daily_dfs, intraday_dfs, shortable, all_dates, use_v2=use_v2)
 
         trades = result.trades
         n      = len(trades)
@@ -240,19 +229,17 @@ def main(days: int = 60):
         losses = [t for t in trades if t.pnl <= 0]
 
         conf_stats = {}
-        for conf in [1, 2, 3]:
+        for conf in [1, 2, 3, 4]:
             ct = [t for t in trades if t.confidence == conf]
             cw = [t for t in ct if t.pnl > 0]
             cl = [t for t in ct if t.pnl <= 0]
             conf_stats[conf] = {
-                "n": len(ct),
-                "w": len(cw),
-                "l": len(cl),
+                "n": len(ct), "w": len(cw), "l": len(cl),
                 "wr": len(cw) / len(ct) * 100 if ct else 0,
             }
 
         rows.append({
-            "label":        combo["label"],
+            "label":        label,
             "trades":       n,
             "wins":         len(wins),
             "losses":       len(losses),
@@ -262,9 +249,6 @@ def main(days: int = 60):
             "sharpe":       result.sharpe,
             "conf":         conf_stats,
         })
-
-    config.HARD_STOP_PCT       = orig_stop
-    config.POSITION_SIZE_TIERS = orig_tiers
 
     print_table(rows)
 

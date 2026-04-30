@@ -91,7 +91,7 @@ class BacktestResult:
     def confidence_breakdown(self):
         print(f"\n  {'확신도':>4} │ {'거래':>5} {'승':>5} {'패':>5} {'승률':>7} {'평균수익':>9} {'총수익':>10}")
         print(f"  {'─'*4}─┼─{'─'*5}─{'─'*5}─{'─'*5}─{'─'*7}─{'─'*9}─{'─'*10}")
-        for conf in [1, 2, 3]:
+        for conf in [1, 2, 3, 4]:
             trades = [t for t in self.trades if t.confidence == conf]
             if not trades:
                 print(f"  {conf:4d} │  데이터 없음")
@@ -157,7 +157,7 @@ def _is_sideways(df: pd.DataFrame, i: int) -> bool:
 
 
 def _check_entry(row: pd.Series, prev: pd.Series, day_df: pd.DataFrame | None = None, use_vp: bool = False) -> tuple[str | None, int]:
-    """진입 조건 확인. 반환: (side, confidence) — side는 'long'|'short'|None"""
+    """[v1 구버전] N-1(prev) 눌림목 + N(row) 양봉 → N+1 진입"""
     close = row["close"]
     open_ = row["open"]
     ema8  = row["ema9"]
@@ -166,28 +166,74 @@ def _check_entry(row: pd.Series, prev: pd.Series, day_df: pd.DataFrame | None = 
     is_bullish = close > open_
     is_bearish = close < open_
 
-    if close > vwap:
+    if close > vwap and ema8 >= vwap:
         ema_pullback = (prev["low"] <= ema8 * (1 + EMA_TOUCH_PCT)
                         and prev["low"] >= ema8 * (1 - PULLBACK_LOWER_PCT))
         vwap_retest  = (prev["low"] <= vwap * (1 + VWAP_TOUCH_PCT)
                         and prev["low"] >= vwap * (1 - VWAP_TOUCH_PCT))
         bounce       = is_bullish and close > ema8
         if bounce and (ema_pullback or vwap_retest):
-            if use_vp and day_df is not None and not vp_is_clear(day_df, "up"):
-                return None, 0
-            score = 1 + int(ema_pullback and vwap_retest) + int(close > vwap * 1.005)
+            both = ema_pullback and vwap_retest
+            vp   = vp_is_clear(day_df, "up") if use_vp and day_df is not None else False
+            if both and vp:   score = 4
+            elif both:        score = 3
+            elif vp:          score = 2
+            else:             score = 1
             return "long", score
 
-    elif close < vwap:
+    elif close < vwap and ema8 <= vwap:
         ema_pullback = (prev["high"] >= ema8 * (1 - EMA_TOUCH_PCT)
                         and prev["high"] <= ema8 * (1 + PULLBACK_LOWER_PCT))
         vwap_retest  = (prev["high"] >= vwap * (1 - VWAP_TOUCH_PCT)
                         and prev["high"] <= vwap * (1 + VWAP_TOUCH_PCT))
         bounce       = is_bearish and close < ema8
         if bounce and (ema_pullback or vwap_retest):
-            if use_vp and day_df is not None and not vp_is_clear(day_df, "down"):
-                return None, 0
-            score = 1 + int(ema_pullback and vwap_retest) + int(close < vwap * 0.995)
+            both = ema_pullback and vwap_retest
+            vp   = vp_is_clear(day_df, "down") if use_vp and day_df is not None else False
+            if both and vp:   score = 4
+            elif both:        score = 3
+            elif vp:          score = 2
+            else:             score = 1
+            return "short", score
+
+    return None, 0
+
+
+def _check_entry_v2(row: pd.Series, prev: pd.Series, prev2: pd.Series,
+                    day_df: pd.DataFrame | None = None, use_vp: bool = False) -> tuple[str | None, int]:
+    """[v2 신버전] N-1(prev2) 눌림목 + N(prev) 양봉+EMA위 → N+1(row) 신호 → N+2 진입"""
+    close = row["close"]
+    ema8  = row["ema9"]
+    vwap  = row["vwap"]
+
+    if close > vwap and ema8 >= vwap:
+        ema_pullback = (prev2["low"] <= ema8 * (1 + EMA_TOUCH_PCT)
+                        and prev2["low"] >= ema8 * (1 - PULLBACK_LOWER_PCT))
+        vwap_retest  = (prev2["low"] <= vwap * (1 + VWAP_TOUCH_PCT)
+                        and prev2["low"] >= vwap * (1 - VWAP_TOUCH_PCT))
+        bounce       = (prev["close"] > prev["open"] and prev["close"] > ema8)
+        if bounce and (ema_pullback or vwap_retest):
+            both = ema_pullback and vwap_retest
+            vp   = vp_is_clear(day_df, "up") if use_vp and day_df is not None else False
+            if both and vp:   score = 4
+            elif both:        score = 3
+            elif vp:          score = 2
+            else:             score = 1
+            return "long", score
+
+    elif close < vwap and ema8 <= vwap:
+        ema_pullback = (prev2["high"] >= ema8 * (1 - EMA_TOUCH_PCT)
+                        and prev2["high"] <= ema8 * (1 + PULLBACK_LOWER_PCT))
+        vwap_retest  = (prev2["high"] >= vwap * (1 - VWAP_TOUCH_PCT)
+                        and prev2["high"] <= vwap * (1 + VWAP_TOUCH_PCT))
+        bounce       = (prev["close"] < prev["open"] and prev["close"] < ema8)
+        if bounce and (ema_pullback or vwap_retest):
+            both = ema_pullback and vwap_retest
+            vp   = vp_is_clear(day_df, "down") if use_vp and day_df is not None else False
+            if both and vp:   score = 4
+            elif both:        score = 3
+            elif vp:          score = 2
+            else:             score = 1
             return "short", score
 
     return None, 0
