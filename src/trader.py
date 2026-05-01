@@ -3,7 +3,7 @@ from datetime import datetime, date, timedelta
 
 from src.broker import get_account, get_position, get_positions, buy_market, sell_market, cancel_all_orders
 from src.trade_logger import log_trade
-from src.data_feed import get_bars
+from src.data_feed import get_bars, get_premarket_hl
 from src.indicators import add_indicators
 from src.strategy import get_signal, Signal
 from src.risk import position_size, check_exit_long, check_exit_short
@@ -150,7 +150,8 @@ def run(interval_sec: int = 300):
                     continue
 
                 # ── 진입 신호 체크 ────────────────────────────────
-                signal, reason, confidence = get_signal(df_ind)
+                pm_high, pm_low = get_premarket_hl(symbol)
+                signal, reason, confidence = get_signal(df_ind, pm_high=pm_high, pm_low=pm_low)
 
                 if signal == Signal.BUY:
                     qty  = position_size(equity, current_price, confidence)
@@ -161,7 +162,18 @@ def run(interval_sec: int = 300):
                     else:
                         print(f"  [{symbol}] 매수신호 but 현금부족 | {reason}")
                 elif signal == Signal.SELL:
-                    print(f"  [{symbol}] HOLD (롱온리) | {reason}")
+                    from src.broker import get_shortable_set
+                    shortable = get_shortable_set([symbol])
+                    if symbol not in shortable:
+                        print(f"  [{symbol}] 숏 불가 (공매도 제한) | {reason}")
+                    else:
+                        qty  = position_size(equity, current_price, confidence)
+                        cost = qty * current_price
+                        if cost <= acct["cash"] * 0.95:
+                            print(f"  [{symbol}] 숏진입(확신도{confidence}) | {reason}")
+                            sell_market(symbol, qty)
+                        else:
+                            print(f"  [{symbol}] 숏신호 but 현금부족 | {reason}")
                 else:
                     print(f"  [{symbol}] {reason}")
 

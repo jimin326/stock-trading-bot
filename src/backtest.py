@@ -2,8 +2,8 @@ import pandas as pd
 import numpy as np
 from dataclasses import dataclass, field
 
-from src.indicators import add_indicators, vp_is_clear
-from src.config import POSITION_SIZE_TIERS, BACKTEST_UNIVERSE, GAP_THRESHOLD, VOL_RATIO_MIN, SCAN_TOP_N, EMA_TOUCH_PCT, PULLBACK_LOWER_PCT, VWAP_TOUCH_PCT, SIDEWAYS_WINDOW, SIDEWAYS_CROSSES, COOLDOWN_BARS
+from src.indicators import add_indicators, vp_is_clear, get_premarket_levels
+from src.config import POSITION_SIZE_TIERS, BACKTEST_UNIVERSE, SCAN_UNIVERSE, GAP_THRESHOLD, VOL_RATIO_MIN, SCAN_TOP_N, EMA_TOUCH_PCT, PULLBACK_LOWER_PCT, VWAP_TOUCH_PCT, PREMARKET_TOUCH_PCT, SIDEWAYS_WINDOW, SIDEWAYS_CROSSES, COOLDOWN_BARS
 from src.risk import check_exit_long, check_exit_short, position_size
 
 
@@ -156,44 +156,50 @@ def _is_sideways(df: pd.DataFrame, i: int) -> bool:
     return crosses >= SIDEWAYS_CROSSES
 
 
-def _check_entry(row: pd.Series, prev: pd.Series, day_df: pd.DataFrame | None = None, use_vp: bool = False) -> tuple[str | None, int]:
-    """[v1 구버전] N-1(prev) 눌림목 + N(row) 양봉 → N+1 진입"""
-    close = row["close"]
-    open_ = row["open"]
-    ema8  = row["ema9"]
-    vwap  = row["vwap"]
+def _check_entry(row: pd.Series, prev: pd.Series, prev2: pd.Series,
+                 day_df: pd.DataFrame | None = None, use_vp: bool = False) -> tuple[str | None, int]:
+    """N-2(prev2) 눌림목 + N-1(prev) 양봉 → N(row) 신호 → N+1 진입 (실거래 get_signal과 동일)
+    확신도 1: EMA 리테스트
+    확신도 2: EMA + VWAP 리테스트
+    확신도 3: EMA 리테스트 + VWAP ↔ 프리마켓 고/저점 일치 (A+)
+    """
+    ema8       = row["ema9"]
+    vwap       = row["vwap"]
+    prev2_ema8 = prev2["ema9"]
+    prev2_vwap = prev2["vwap"]
 
-    is_bullish = close > open_
-    is_bearish = close < open_
+    pm_high, pm_low = get_premarket_levels(day_df) if day_df is not None else (None, None)
 
-    if close > vwap and ema8 >= vwap:
-        ema_pullback = (prev["low"] <= ema8 * (1 + EMA_TOUCH_PCT)
-                        and prev["low"] >= ema8 * (1 - PULLBACK_LOWER_PCT))
-        vwap_retest  = (prev["low"] <= vwap * (1 + VWAP_TOUCH_PCT)
-                        and prev["low"] >= vwap * (1 - VWAP_TOUCH_PCT))
-        bounce       = is_bullish and close > ema8
-        if bounce and (ema_pullback or vwap_retest):
-            both = ema_pullback and vwap_retest
-            vp   = vp_is_clear(day_df, "up") if use_vp and day_df is not None else False
-            if both and vp:   score = 4
-            elif both:        score = 3
-            elif vp:          score = 2
+    if row["close"] > vwap and ema8 >= vwap:
+        ema_pullback = (prev2["low"] <= prev2_ema8 * (1 + EMA_TOUCH_PCT)
+                        and prev2["low"] >= prev2_ema8 * (1 - PULLBACK_LOWER_PCT))
+        vwap_retest  = (prev2["low"] <= prev2_vwap * (1 + VWAP_TOUCH_PCT)
+                        and prev2["low"] >= prev2_vwap * (1 - VWAP_TOUCH_PCT))
+        bounce       = prev["close"] > prev["open"] and prev["close"] > ema8
+        vwap_near_pm = (pm_high is not None
+                        and abs(vwap - pm_high) / pm_high <= PREMARKET_TOUCH_PCT)
+        if bounce and ema_pullback:
+            vp_clear = vp_is_clear(day_df, "up") if use_vp and day_df is not None else False
+            if vp_clear:      score = 3
+            elif vwap_retest: score = 2
             else:             score = 1
+            # 보류: 프리마켓 고/저점 조건 (IEX 피드 불완전으로 비활성)
+            # vwap_near_pm = pm_high is not None and abs(vwap - pm_high) / pm_high <= PREMARKET_TOUCH_PCT
             return "long", score
 
-    elif close < vwap and ema8 <= vwap:
-        ema_pullback = (prev["high"] >= ema8 * (1 - EMA_TOUCH_PCT)
-                        and prev["high"] <= ema8 * (1 + PULLBACK_LOWER_PCT))
-        vwap_retest  = (prev["high"] >= vwap * (1 - VWAP_TOUCH_PCT)
-                        and prev["high"] <= vwap * (1 + VWAP_TOUCH_PCT))
-        bounce       = is_bearish and close < ema8
-        if bounce and (ema_pullback or vwap_retest):
-            both = ema_pullback and vwap_retest
-            vp   = vp_is_clear(day_df, "down") if use_vp and day_df is not None else False
-            if both and vp:   score = 4
-            elif both:        score = 3
-            elif vp:          score = 2
+    elif row["close"] < vwap and ema8 <= vwap:
+        ema_pullback = (prev2["high"] >= prev2_ema8 * (1 - EMA_TOUCH_PCT)
+                        and prev2["high"] <= prev2_ema8 * (1 + PULLBACK_LOWER_PCT))
+        vwap_retest  = (prev2["high"] >= prev2_vwap * (1 - VWAP_TOUCH_PCT)
+                        and prev2["high"] <= prev2_vwap * (1 + VWAP_TOUCH_PCT))
+        bounce       = prev["close"] < prev["open"] and prev["close"] < ema8
+        if bounce and ema_pullback:
+            vp_clear = vp_is_clear(day_df, "down") if use_vp and day_df is not None else False
+            if vp_clear:      score = 3
+            elif vwap_retest: score = 2
             else:             score = 1
+            # 보류: 프리마켓 고/저점 조건 (IEX 피드 불완전으로 비활성)
+            # vwap_near_pm = pm_low is not None and abs(vwap - pm_low) / pm_low <= PREMARKET_TOUCH_PCT
             return "short", score
 
     return None, 0
@@ -309,6 +315,7 @@ def run_scanner_backtest(
     use_vp: bool = True,
     side_filter: str = "both",   # "long_only" | "short_only" | "both"
     strict_exit: bool = False,   # True=종가 EMA 이탈 즉시 청산(영상방식)
+    universe: list[str] | None = None,  # None이면 실거래와 동일한 SCAN_UNIVERSE 사용
 ) -> BacktestResult:
     """매일 스캐너로 종목 선별 후 해당 종목만 거래하는 현실적인 백테스트"""
     from alpaca.data.historical import StockHistoricalDataClient
@@ -318,25 +325,29 @@ def run_scanner_backtest(
     from datetime import datetime, timedelta
     import src.config as _cfg
 
+    _universe = universe if universe is not None else SCAN_UNIVERSE
+
     client = StockHistoricalDataClient(_cfg.ALPACA_API_KEY, _cfg.ALPACA_SECRET_KEY)
     end   = datetime.now()
-    start_intra = end - timedelta(days=days)
+    # 날짜 기준으로 자정부터 시작해야 프리마켓 바(4:00 AM~)가 누락되지 않음
+    start_intra = (end - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
     start_daily = end - timedelta(days=days + 35)
 
-    print(f"[1/3] 일봉 데이터 수집 중 ({len(BACKTEST_UNIVERSE)}종목, {days+35}일)...")
+    print(f"[1/3] 일봉 데이터 수집 중 ({len(_universe)}종목, {days+35}일)...")
     daily_bars = client.get_stock_bars(StockBarsRequest(
-        symbol_or_symbols=BACKTEST_UNIVERSE,
+        symbol_or_symbols=_universe,
         timeframe=TimeFrame.Day,
         start=start_daily,
         feed=DataFeed.IEX,
     )).data
 
-    print(f"[2/3] 5분봉 데이터 수집 중 (약 30초 소요)...")
+    print(f"[2/3] 5분봉 데이터 수집 중 (프리마켓 포함, 약 30초 소요)...")
     intraday_bars = client.get_stock_bars(StockBarsRequest(
-        symbol_or_symbols=BACKTEST_UNIVERSE,
+        symbol_or_symbols=_universe,
         timeframe=TimeFrame(5, TimeFrameUnit.Minute),
         start=start_intra,
         feed=DataFeed.IEX,
+        extended_hours=True,
     )).data
 
     daily_dfs: dict[str, pd.DataFrame] = {}
@@ -365,8 +376,8 @@ def run_scanner_backtest(
 
     print(f"[3/3] 공매도 가능 종목 조회 중...")
     from src.broker import get_shortable_set
-    shortable = get_shortable_set(BACKTEST_UNIVERSE)
-    print(f"      공매도 가능: {len(shortable)}/{len(BACKTEST_UNIVERSE)}종목")
+    shortable = get_shortable_set(_universe)
+    print(f"      공매도 가능: {len(shortable)}/{len(_universe)}종목")
 
     print(f"[4/4] 전략 시뮬레이션 중 ({len(all_dates)}거래일)...")
     result = BacktestResult(symbol="SCANNER", initial_equity=initial_equity)
@@ -419,9 +430,10 @@ def run_scanner_backtest(
 
             position = None
             cooldown_until = -1
-            for i in range(1, len(day_df)):
+            for i in range(2, len(day_df)):
                 row   = day_df.iloc[i]
                 prev  = day_df.iloc[i - 1]
+                prev2 = day_df.iloc[i - 2]
                 close = row["close"]
                 open_ = row["open"]
                 high  = row["high"]
@@ -449,21 +461,20 @@ def run_scanner_backtest(
                     continue
                 if _is_sideways(day_df, i):
                     continue
-                side, confidence = _check_entry(row, prev, day_df=day_df.iloc[:i+1], use_vp=use_vp)
-                if side and i + 1 < len(day_df):
+                side, confidence = _check_entry(row, prev, prev2, day_df=day_df.iloc[:i+1], use_vp=use_vp)
+                if side:
                     if side_filter == "long_only" and side != "long":
                         continue
                     if side_filter == "short_only" and side != "short":
                         continue
-                    next_row    = day_df.iloc[i + 1]
-                    entry_price = next_row["open"]
+                    entry_price = row["open"]
                     qty = position_size(equity, entry_price, confidence)
                     if side == "long" and equity >= entry_price * qty:
                         position = Trade(symbol=sym, side="long",
-                                         entry_time=next_row.name, entry_price=entry_price, qty=qty, confidence=confidence)
+                                         entry_time=row.name, entry_price=entry_price, qty=qty, confidence=confidence)
                     elif side == "short" and sym in shortable:
                         position = Trade(symbol=sym, side="short",
-                                         entry_time=next_row.name, entry_price=entry_price, qty=qty, confidence=confidence)
+                                         entry_time=row.name, entry_price=entry_price, qty=qty, confidence=confidence)
 
             if position:
                 last = day_df.iloc[-1]
@@ -480,7 +491,7 @@ def run_scanner_backtest(
 
 
 if __name__ == "__main__":
-    result = run_scanner_backtest(days=90)
+    result = run_scanner_backtest(days=90, side_filter="both")
     result.summary()
     result.print_trades(n=20)
 

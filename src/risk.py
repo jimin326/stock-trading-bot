@@ -21,8 +21,8 @@ def check_exit_long(
     strict=True(영상방식): 종가만 EMA8 아래면 즉시 청산
     """
     stop_price = entry * (1 - config.HARD_STOP_PCT)
-    if low <= stop_price:
-        return True, stop_price, f"하드손절(-{config.HARD_STOP_PCT*100:.0f}%)"
+    if close <= stop_price:
+        return True, close, f"하드손절(-{config.HARD_STOP_PCT*100:.0f}%)"
     if strict:
         if close < ema9:
             return True, close, "EMA8하향이탈(종가)"
@@ -42,8 +42,8 @@ def check_exit_short(
     strict=True(영상방식): 종가만 EMA8 위면 즉시 청산
     """
     stop_price = entry * (1 + config.HARD_STOP_PCT)
-    if high >= stop_price:
-        return True, stop_price, f"하드손절(-{config.HARD_STOP_PCT*100:.0f}%)"
+    if close >= stop_price:
+        return True, close, f"하드손절(-{config.HARD_STOP_PCT*100:.0f}%)"
     if strict:
         if close > ema9:
             return True, close, "EMA8상향이탈(종가)"

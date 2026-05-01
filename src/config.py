@@ -13,17 +13,18 @@ TRADE_SYMBOLS = ["NVDA", "TSLA", "AAPL", "AMD", "META", "MSFT", "AMZN", "GOOGL",
 TIMEFRAME  = "5Min"
 EMA_PERIOD = 8
 
-EMA_TOUCH_PCT      = 0.005  # EMA 눌림목 인정 범위 (0.5%)
-PULLBACK_LOWER_PCT = 0.02   # 눌림목 하한선: EMA 기준 -2% 이내까지만 인정
+EMA_TOUCH_PCT      = 0.003  # EMA 눌림목 인정 범위 (0.3%)
+PULLBACK_LOWER_PCT = 0.003  # 눌림목 하한선: EMA 기준 -0.3% 이내까지만 인정
 VWAP_TOUCH_PCT     = 0.003  # VWAP 리테스트 인정 범위 (0.3%)
+PREMARKET_TOUCH_PCT = 0.005 # VWAP ↔ 프리마켓 고/저점 일치 인정 범위 (0.5%)
 
 HARD_STOP_PCT      = 0.01   # 하드 손절 -1%
 FRACTIONAL_SHARES  = True   # True=소수점 거래, False=정수 거래
-COOLDOWN_BARS    = 5      # 청산 후 재진입 금지 캔들 수 (5캔들 = 25분)
-STRICT_EXIT      = True   # True=종가 EMA 이탈 즉시 청산, False=몸통 전체 이탈
+COOLDOWN_BARS    = 2      # 청산 후 재진입 금지 캔들 수 (2캔들 = 10분)
+STRICT_EXIT      = False  # True=종가 EMA 이탈 즉시 청산, False=몸통 전체 이탈
 
 # 확신도(1~3)별 포지션 비중
-POSITION_SIZE_TIERS = [0.05, 0.10, 0.20, 0.30]
+POSITION_SIZE_TIERS = [0.05, 0.10, 0.20]
 
 SIDEWAYS_WINDOW    = 6    # 횡보 판단에 사용할 최근 캔들 수 (5분봉 기준 30분)
 SIDEWAYS_CROSSES   = 3    # 해당 구간에서 VWAP 교차 횟수 ≥ 이 값이면 횡보로 판단
